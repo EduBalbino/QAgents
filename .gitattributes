@@ -1,0 +1,5 @@
+# Track all files inside the data directory with Git LFS
+# Adjust the path if your directory is named differently (e.g., @data/)
+data/** filter=lfs diff=lfs merge=lfs -text
+
+
