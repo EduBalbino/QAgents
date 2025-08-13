@@ -1,0 +1,22 @@
+--- Starting Data Preparation ---
+Quickly scanning file to count rows...
+File has 2830743 rows. Loading a random sample of 5000 rows.
+Dataset loaded. Final shape: (5000, 9)
+Features and labels extracted.
+Data split into training and testing sets.
+X_train shape: (4000, 8)
+X_test shape: (1000, 8)
+Features scaled.
+Labels transformed.
+Data preparation complete. Time elapsed: 4.10 seconds.
+
+--- Starting Quantum Setup ---
+Initializing lightning.qubit device with 8 qubits for multi-core performance.
+Quantum device initialized.
+
+--- Initializing Training ---
+Training for 1 epoch (40 iterations for a training set of size 4000).
+Validation set created with 500 data points.
+
+Class weights computed for handling imbalance: {tensor(-1, requires_grad=False): np.float64(0.6215040397762586), tensor(1, requires_grad=False): np.float64(2.557544757033248)}
+Parameters initialized. Starting training for 40 iterations with batch size 100.

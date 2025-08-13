@@ -50,7 +50,7 @@ import random # Needed for the new sampling method
 # --- MASTER CONFIGURATION ---
 # Set a number for a fast dev run (e.g., 5000).
 # Set to None to use the full dataset for a production run.
-DEV_RUN_SAMPLE_SIZE = 500000
+DEV_RUN_SAMPLE_SIZE = 50000
 # ==============================================================================
 
 # %%

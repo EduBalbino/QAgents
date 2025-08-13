@@ -1,0 +1,44 @@
+--- Starting Data Preparation ---
+Quickly scanning file to count rows...
+File has 2830743 rows. Loading a random sample of 5000 rows.
+Dataset loaded. Final shape: (5000, 9)
+Features and labels extracted.
+Data split into training and testing sets.
+X_train shape: (4000, 8)
+X_test shape: (1000, 8)
+Features scaled.
+Labels transformed.
+Data preparation complete. Time elapsed: 3.78 seconds.
+
+--- Starting Quantum Setup ---
+Initializing lightning.qubit device with 8 qubits for multi-core performance.
+Quantum device initialized.
+
+--- Initializing Training ---
+Training for 1 epoch (40 iterations for a training set of size 4000).
+Validation set created with 500 data points.
+
+Class weights computed for handling imbalance: {tensor(-1, requires_grad=False): np.float64(0.6277463904582549), tensor(1, requires_grad=False): np.float64(2.457002457002457)}
+Parameters initialized. Starting training for 40 iterations with batch size 100.
+Iter:    10 | Batch Cost: 0.7321374 | Batch Acc: 0.8300000
+Iter:    20 | Batch Cost: 0.9709669 | Batch Acc: 0.8500000
+Iter:    30 | Batch Cost: 0.8079426 | Batch Acc: 0.8700000
+Iter:    40 | Batch Cost: 0.8933362 | Batch Acc: 0.8000000
+
+Training loop finished. Total training time: 15.68 seconds.
+
+--- Running Quick Validation Check ---
+Validation Cost: 0.8894526 | Validation Accuracy: 0.8340000
+Validation check completed in: 1.58 seconds.
+
+--- Evaluating model on test data ---
+Test set is large, processing in mini-batches.
+--- Test Results ---
+Acurácia (Overall): 0.8390
+Acurácia (Benign):  0.9309 (from 796 samples)
+Acurácia (Attack):  0.4804 (from 204 samples)
+Precisão: 0.7577
+Recall:   0.7056
+F1-Score: 0.7255
+--------------------
+Evaluation finished in: 3.08 seconds.
