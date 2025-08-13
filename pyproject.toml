@@ -95,6 +95,7 @@ dependencies = [
     "pyzmq==27.0.0",
     "requests==2.32.4",
     "requests-toolbelt==1.0.0",
+    "ruff>=0.12.7",
     "rustworkx==0.16.0",
     "scikit-learn==1.7.0",
     "scipy==1.16.0",
