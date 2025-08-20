@@ -13,3 +13,4 @@ wheels/
 .history
 
 /data/PCA_CIC-DDoS2019.csv
+/data/*

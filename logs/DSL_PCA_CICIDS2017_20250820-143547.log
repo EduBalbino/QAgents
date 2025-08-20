@@ -1,0 +1,17 @@
+--- Starting experiment (DSL) ---
+Dataset loaded from data/PCA_CICIDS2017.csv. Shape: (500, 9)
+Features and labels extracted.
+Data split: X_train=(400, 8), X_test=(100, 8)
+Features scaled.
+Quantum device 'lightning.qubit' initialized with 8 wires.
+Class weights: {tensor(-1, requires_grad=False): np.float64(0.6116207951070336), tensor(1, requires_grad=False): np.float64(2.73972602739726)}
+Epoch 1 Iter 6/6 | Batch Cost: 0.8531610 | Batch Acc: 0.8437500
+Training finished in 2.23s over 1 epoch(s), 6 iters.
+Validation Cost: 0.8462094 | Validation Accuracy: 0.8406250
+--- Test Results ---
+Accuracy: 0.8100
+Precision: 0.4091
+Recall:   0.4939
+F1-Score: 0.4475
+--------------------
+Experiment complete.

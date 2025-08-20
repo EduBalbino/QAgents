@@ -1,0 +1,256 @@
+--- Starting Data Preparation ---
+Quickly scanning file to count rows...
+File has 257673 rows. Loading a random sample of 257673 rows.
+Dataset loaded. Final shape: (257673, 45)
+Dataset Columns: Index(['id', 'dur', 'proto', 'service', 'state', 'spkts', 'dpkts', 'sbytes',
+       'dbytes', 'rate', 'sttl', 'dttl', 'sload', 'dload', 'sloss', 'dloss',
+       'sinpkt', 'dinpkt', 'sjit', 'djit', 'swin', 'stcpb', 'dtcpb', 'dwin',
+       'tcprtt', 'synack', 'ackdat', 'smean', 'dmean', 'trans_depth',
+       'response_body_len', 'ct_srv_src', 'ct_state_ttl', 'ct_dst_ltm',
+       'ct_src_dport_ltm', 'ct_dst_sport_ltm', 'ct_dst_src_ltm',
+       'is_ftp_login', 'ct_ftp_cmd', 'ct_flw_http_mthd', 'ct_src_ltm',
+       'ct_srv_dst', 'is_sm_ips_ports', 'attack_cat', 'label'],
+      dtype='object')
+Features and labels extracted.
+Data split into training and testing sets.
+X_train shape: (206138, 8)
+X_test shape: (51535, 8)
+Features scaled.
+Labels transformed.
+Data preparation complete. Time elapsed: 0.98 seconds.
+
+--- Starting Quantum Setup ---
+Initializing lightning.qubit device with 8 qubits for multi-core performance.
+Quantum device initialized.
+
+--- Initializing Training ---
+Training for 1 epoch (2061 iterations for a training set of size 206138).
+Validation set created with 500 data points.
+
+Class weights computed for handling imbalance: {tensor(-1, requires_grad=False): np.float64(1.3853360215053763), tensor(1, requires_grad=False): np.float64(0.7823786606749761)}
+Parameters initialized. Starting training for 2061 iterations with batch size 100.
+Iter:    10 | Batch Cost: 1.1914714 | Batch Acc: 0.3300000
+Iter:    20 | Batch Cost: 1.0059403 | Batch Acc: 0.4100000
+Iter:    30 | Batch Cost: 0.9815402 | Batch Acc: 0.6600000
+Iter:    40 | Batch Cost: 0.9322842 | Batch Acc: 0.6300000
+Iter:    50 | Batch Cost: 0.9202167 | Batch Acc: 0.7900000
+Iter:    60 | Batch Cost: 0.8654031 | Batch Acc: 0.7200000
+Iter:    70 | Batch Cost: 0.9402986 | Batch Acc: 0.5300000
+Iter:    80 | Batch Cost: 0.8300451 | Batch Acc: 0.7800000
+Iter:    90 | Batch Cost: 0.9419425 | Batch Acc: 0.5400000
+Iter:   100 | Batch Cost: 0.9123919 | Batch Acc: 0.7200000
+Iter:   110 | Batch Cost: 0.8731859 | Batch Acc: 0.6500000
+Iter:   120 | Batch Cost: 0.9118410 | Batch Acc: 0.7500000
+Iter:   130 | Batch Cost: 0.8865912 | Batch Acc: 0.7400000
+Iter:   140 | Batch Cost: 0.8681911 | Batch Acc: 0.7000000
+Iter:   150 | Batch Cost: 0.9317427 | Batch Acc: 0.6500000
+Iter:   160 | Batch Cost: 0.8564758 | Batch Acc: 0.7700000
+Iter:   170 | Batch Cost: 0.9037529 | Batch Acc: 0.7500000
+Iter:   180 | Batch Cost: 0.9216766 | Batch Acc: 0.6000000
+Iter:   190 | Batch Cost: 0.8290975 | Batch Acc: 0.7500000
+Iter:   200 | Batch Cost: 0.9373622 | Batch Acc: 0.6800000
+Iter:   210 | Batch Cost: 0.8739255 | Batch Acc: 0.7100000
+Iter:   220 | Batch Cost: 0.9332850 | Batch Acc: 0.7000000
+Iter:   230 | Batch Cost: 0.9485039 | Batch Acc: 0.6700000
+Iter:   240 | Batch Cost: 0.8281013 | Batch Acc: 0.7300000
+Iter:   250 | Batch Cost: 0.9173980 | Batch Acc: 0.7100000
+Iter:   260 | Batch Cost: 0.8499864 | Batch Acc: 0.6300000
+Iter:   270 | Batch Cost: 0.9024817 | Batch Acc: 0.7100000
+Iter:   280 | Batch Cost: 0.8632060 | Batch Acc: 0.7300000
+Iter:   290 | Batch Cost: 0.8944094 | Batch Acc: 0.8000000
+Iter:   300 | Batch Cost: 0.8686278 | Batch Acc: 0.7900000
+Iter:   310 | Batch Cost: 1.0196062 | Batch Acc: 0.4200000
+Iter:   320 | Batch Cost: 0.9004036 | Batch Acc: 0.7200000
+Iter:   330 | Batch Cost: 0.8575676 | Batch Acc: 0.7100000
+Iter:   340 | Batch Cost: 0.8576099 | Batch Acc: 0.7800000
+Iter:   350 | Batch Cost: 0.8326859 | Batch Acc: 0.7300000
+Iter:   360 | Batch Cost: 0.9298225 | Batch Acc: 0.5800000
+Iter:   370 | Batch Cost: 0.8694987 | Batch Acc: 0.6800000
+Iter:   380 | Batch Cost: 0.8767221 | Batch Acc: 0.7400000
+Iter:   390 | Batch Cost: 0.9712997 | Batch Acc: 0.5200000
+Iter:   400 | Batch Cost: 0.9146776 | Batch Acc: 0.7200000
+Iter:   410 | Batch Cost: 0.9491409 | Batch Acc: 0.5100000
+Iter:   420 | Batch Cost: 0.9686480 | Batch Acc: 0.4700000
+Iter:   430 | Batch Cost: 0.8505333 | Batch Acc: 0.7200000
+Iter:   440 | Batch Cost: 0.8521135 | Batch Acc: 0.7500000
+Iter:   450 | Batch Cost: 0.9708473 | Batch Acc: 0.4800000
+Iter:   460 | Batch Cost: 0.8519855 | Batch Acc: 0.6600000
+Iter:   470 | Batch Cost: 0.8634317 | Batch Acc: 0.8000000
+Iter:   480 | Batch Cost: 0.9156420 | Batch Acc: 0.7300000
+Iter:   490 | Batch Cost: 0.9267393 | Batch Acc: 0.7700000
+Iter:   500 | Batch Cost: 0.8813942 | Batch Acc: 0.7400000
+Iter:   510 | Batch Cost: 0.8466863 | Batch Acc: 0.6900000
+Iter:   520 | Batch Cost: 0.8772436 | Batch Acc: 0.7100000
+Iter:   530 | Batch Cost: 0.8493524 | Batch Acc: 0.7100000
+Iter:   540 | Batch Cost: 0.9453855 | Batch Acc: 0.5100000
+Iter:   550 | Batch Cost: 0.8435062 | Batch Acc: 0.7200000
+Iter:   560 | Batch Cost: 0.8866091 | Batch Acc: 0.7100000
+Iter:   570 | Batch Cost: 0.8782980 | Batch Acc: 0.7300000
+Iter:   580 | Batch Cost: 0.9002325 | Batch Acc: 0.7000000
+Iter:   590 | Batch Cost: 0.8694194 | Batch Acc: 0.6500000
+Iter:   600 | Batch Cost: 0.8508460 | Batch Acc: 0.8400000
+Iter:   610 | Batch Cost: 0.9384702 | Batch Acc: 0.6400000
+Iter:   620 | Batch Cost: 0.8036471 | Batch Acc: 0.7700000
+Iter:   630 | Batch Cost: 0.9068088 | Batch Acc: 0.7100000
+Iter:   640 | Batch Cost: 0.8983308 | Batch Acc: 0.7300000
+Iter:   650 | Batch Cost: 0.9016378 | Batch Acc: 0.7200000
+Iter:   660 | Batch Cost: 0.8617058 | Batch Acc: 0.6500000
+Iter:   670 | Batch Cost: 0.9325764 | Batch Acc: 0.6400000
+Iter:   680 | Batch Cost: 0.9093143 | Batch Acc: 0.7000000
+Iter:   690 | Batch Cost: 0.8898959 | Batch Acc: 0.7300000
+Iter:   700 | Batch Cost: 0.9027255 | Batch Acc: 0.7700000
+Iter:   710 | Batch Cost: 0.8891600 | Batch Acc: 0.7500000
+Iter:   720 | Batch Cost: 0.8393143 | Batch Acc: 0.7600000
+Iter:   730 | Batch Cost: 0.8887775 | Batch Acc: 0.7100000
+Iter:   740 | Batch Cost: 0.8480409 | Batch Acc: 0.7900000
+Iter:   750 | Batch Cost: 0.8610148 | Batch Acc: 0.7600000
+Iter:   760 | Batch Cost: 0.8877575 | Batch Acc: 0.7300000
+Iter:   770 | Batch Cost: 0.9991247 | Batch Acc: 0.4600000
+Iter:   780 | Batch Cost: 0.9519824 | Batch Acc: 0.4900000
+Iter:   790 | Batch Cost: 0.8796842 | Batch Acc: 0.7100000
+Iter:   800 | Batch Cost: 0.8892255 | Batch Acc: 0.6900000
+Iter:   810 | Batch Cost: 0.8945614 | Batch Acc: 0.7300000
+Iter:   820 | Batch Cost: 0.8629120 | Batch Acc: 0.6500000
+Iter:   830 | Batch Cost: 0.9291583 | Batch Acc: 0.5800000
+Iter:   840 | Batch Cost: 0.8087471 | Batch Acc: 0.8000000
+Iter:   850 | Batch Cost: 0.8850998 | Batch Acc: 0.7000000
+Iter:   860 | Batch Cost: 0.9444042 | Batch Acc: 0.6100000
+Iter:   870 | Batch Cost: 0.8617265 | Batch Acc: 0.7400000
+Iter:   880 | Batch Cost: 0.9878671 | Batch Acc: 0.4600000
+Iter:   890 | Batch Cost: 0.8849753 | Batch Acc: 0.7200000
+Iter:   900 | Batch Cost: 0.8749425 | Batch Acc: 0.6900000
+Iter:   910 | Batch Cost: 0.8999119 | Batch Acc: 0.6500000
+Iter:   920 | Batch Cost: 0.9573969 | Batch Acc: 0.6500000
+Iter:   930 | Batch Cost: 0.9404090 | Batch Acc: 0.5300000
+Iter:   940 | Batch Cost: 0.9281154 | Batch Acc: 0.7600000
+Iter:   950 | Batch Cost: 0.8557568 | Batch Acc: 0.6800000
+Iter:   960 | Batch Cost: 0.8970470 | Batch Acc: 0.7400000
+Iter:   970 | Batch Cost: 0.8553784 | Batch Acc: 0.7600000
+Iter:   980 | Batch Cost: 0.8348586 | Batch Acc: 0.7500000
+Iter:   990 | Batch Cost: 0.8716348 | Batch Acc: 0.7700000
+Iter:  1000 | Batch Cost: 0.9166084 | Batch Acc: 0.5600000
+Iter:  1010 | Batch Cost: 0.8681669 | Batch Acc: 0.8000000
+Iter:  1020 | Batch Cost: 0.9068127 | Batch Acc: 0.6900000
+Iter:  1030 | Batch Cost: 0.8953782 | Batch Acc: 0.7600000
+Iter:  1040 | Batch Cost: 0.8534801 | Batch Acc: 0.7300000
+Iter:  1050 | Batch Cost: 0.9251948 | Batch Acc: 0.6800000
+Iter:  1060 | Batch Cost: 0.8995156 | Batch Acc: 0.6900000
+Iter:  1070 | Batch Cost: 0.9792313 | Batch Acc: 0.4200000
+Iter:  1080 | Batch Cost: 0.8762633 | Batch Acc: 0.7800000
+Iter:  1090 | Batch Cost: 0.8763169 | Batch Acc: 0.7900000
+Iter:  1100 | Batch Cost: 0.8872150 | Batch Acc: 0.6200000
+Iter:  1110 | Batch Cost: 0.8952743 | Batch Acc: 0.7400000
+Iter:  1120 | Batch Cost: 0.8900398 | Batch Acc: 0.7500000
+Iter:  1130 | Batch Cost: 0.8782273 | Batch Acc: 0.6800000
+Iter:  1140 | Batch Cost: 0.8535966 | Batch Acc: 0.7800000
+Iter:  1150 | Batch Cost: 0.8436150 | Batch Acc: 0.7900000
+Iter:  1160 | Batch Cost: 0.8605898 | Batch Acc: 0.7900000
+Iter:  1170 | Batch Cost: 0.8927173 | Batch Acc: 0.6900000
+Iter:  1180 | Batch Cost: 0.8319840 | Batch Acc: 0.7600000
+Iter:  1190 | Batch Cost: 0.8758755 | Batch Acc: 0.7200000
+Iter:  1200 | Batch Cost: 0.8744989 | Batch Acc: 0.7900000
+Iter:  1210 | Batch Cost: 0.9346927 | Batch Acc: 0.6800000
+Iter:  1220 | Batch Cost: 0.8715957 | Batch Acc: 0.7500000
+Iter:  1230 | Batch Cost: 0.8194744 | Batch Acc: 0.7500000
+Iter:  1240 | Batch Cost: 0.8547966 | Batch Acc: 0.7600000
+Iter:  1250 | Batch Cost: 0.9211671 | Batch Acc: 0.7200000
+Iter:  1260 | Batch Cost: 0.8438521 | Batch Acc: 0.8300000
+Iter:  1270 | Batch Cost: 0.9384745 | Batch Acc: 0.5700000
+Iter:  1280 | Batch Cost: 0.8770687 | Batch Acc: 0.6800000
+Iter:  1290 | Batch Cost: 0.8877099 | Batch Acc: 0.7000000
+Iter:  1300 | Batch Cost: 0.8657302 | Batch Acc: 0.6700000
+Iter:  1310 | Batch Cost: 0.9700218 | Batch Acc: 0.4900000
+Iter:  1320 | Batch Cost: 0.8752262 | Batch Acc: 0.6400000
+Iter:  1330 | Batch Cost: 0.8827749 | Batch Acc: 0.6900000
+Iter:  1340 | Batch Cost: 0.8789674 | Batch Acc: 0.7400000
+Iter:  1350 | Batch Cost: 0.8308667 | Batch Acc: 0.8300000
+Iter:  1360 | Batch Cost: 0.8984401 | Batch Acc: 0.5600000
+Iter:  1370 | Batch Cost: 0.8710571 | Batch Acc: 0.8700000
+Iter:  1380 | Batch Cost: 0.7930681 | Batch Acc: 0.7900000
+Iter:  1390 | Batch Cost: 0.8899381 | Batch Acc: 0.5600000
+Iter:  1400 | Batch Cost: 0.8862041 | Batch Acc: 0.7200000
+Iter:  1410 | Batch Cost: 0.9272630 | Batch Acc: 0.5300000
+Iter:  1420 | Batch Cost: 0.8352463 | Batch Acc: 0.7500000
+Iter:  1430 | Batch Cost: 0.9288529 | Batch Acc: 0.6500000
+Iter:  1440 | Batch Cost: 0.8583232 | Batch Acc: 0.6600000
+Iter:  1450 | Batch Cost: 0.9366834 | Batch Acc: 0.7300000
+Iter:  1460 | Batch Cost: 0.9052692 | Batch Acc: 0.7800000
+Iter:  1470 | Batch Cost: 0.8880120 | Batch Acc: 0.7000000
+Iter:  1480 | Batch Cost: 0.9458666 | Batch Acc: 0.4900000
+Iter:  1490 | Batch Cost: 0.7574137 | Batch Acc: 0.7600000
+Iter:  1500 | Batch Cost: 0.9594594 | Batch Acc: 0.5200000
+Iter:  1510 | Batch Cost: 0.8562365 | Batch Acc: 0.7200000
+Iter:  1520 | Batch Cost: 0.9260037 | Batch Acc: 0.7100000
+Iter:  1530 | Batch Cost: 0.8405677 | Batch Acc: 0.7100000
+Iter:  1540 | Batch Cost: 0.8784790 | Batch Acc: 0.6800000
+Iter:  1550 | Batch Cost: 0.9128793 | Batch Acc: 0.8100000
+Iter:  1560 | Batch Cost: 0.8886660 | Batch Acc: 0.6800000
+Iter:  1570 | Batch Cost: 0.9197241 | Batch Acc: 0.7200000
+Iter:  1580 | Batch Cost: 0.8010123 | Batch Acc: 0.7400000
+Iter:  1590 | Batch Cost: 0.8911961 | Batch Acc: 0.7400000
+Iter:  1600 | Batch Cost: 0.8659847 | Batch Acc: 0.7400000
+Iter:  1610 | Batch Cost: 0.8896083 | Batch Acc: 0.7300000
+Iter:  1620 | Batch Cost: 0.8832989 | Batch Acc: 0.7300000
+Iter:  1630 | Batch Cost: 0.8779726 | Batch Acc: 0.7400000
+Iter:  1640 | Batch Cost: 0.8748039 | Batch Acc: 0.7500000
+Iter:  1650 | Batch Cost: 0.8486018 | Batch Acc: 0.7800000
+Iter:  1660 | Batch Cost: 0.8560692 | Batch Acc: 0.8300000
+Iter:  1670 | Batch Cost: 0.9346768 | Batch Acc: 0.5900000
+Iter:  1680 | Batch Cost: 0.8628504 | Batch Acc: 0.7400000
+Iter:  1690 | Batch Cost: 0.9347091 | Batch Acc: 0.5000000
+Iter:  1700 | Batch Cost: 0.8271624 | Batch Acc: 0.7600000
+Iter:  1710 | Batch Cost: 0.9089998 | Batch Acc: 0.7100000
+Iter:  1720 | Batch Cost: 0.8921632 | Batch Acc: 0.7200000
+Iter:  1730 | Batch Cost: 0.8644635 | Batch Acc: 0.8200000
+Iter:  1740 | Batch Cost: 0.9960072 | Batch Acc: 0.4600000
+Iter:  1750 | Batch Cost: 0.8109013 | Batch Acc: 0.7500000
+Iter:  1760 | Batch Cost: 0.8997384 | Batch Acc: 0.7200000
+Iter:  1770 | Batch Cost: 0.9538836 | Batch Acc: 0.5100000
+Iter:  1780 | Batch Cost: 0.8524545 | Batch Acc: 0.7100000
+Iter:  1790 | Batch Cost: 0.9148612 | Batch Acc: 0.6700000
+Iter:  1800 | Batch Cost: 0.8345936 | Batch Acc: 0.7400000
+Iter:  1810 | Batch Cost: 0.8749971 | Batch Acc: 0.7500000
+Iter:  1820 | Batch Cost: 0.8564965 | Batch Acc: 0.8200000
+Iter:  1830 | Batch Cost: 0.9465391 | Batch Acc: 0.5500000
+Iter:  1840 | Batch Cost: 0.9169814 | Batch Acc: 0.6500000
+Iter:  1850 | Batch Cost: 0.9532114 | Batch Acc: 0.5300000
+Iter:  1860 | Batch Cost: 0.9157977 | Batch Acc: 0.6300000
+Iter:  1870 | Batch Cost: 0.8294537 | Batch Acc: 0.7200000
+Iter:  1880 | Batch Cost: 0.9359362 | Batch Acc: 0.6000000
+Iter:  1890 | Batch Cost: 0.9084768 | Batch Acc: 0.7200000
+Iter:  1900 | Batch Cost: 0.9011538 | Batch Acc: 0.6400000
+Iter:  1910 | Batch Cost: 0.9122510 | Batch Acc: 0.5800000
+Iter:  1920 | Batch Cost: 0.8986609 | Batch Acc: 0.8100000
+Iter:  1930 | Batch Cost: 0.8901318 | Batch Acc: 0.7400000
+Iter:  1940 | Batch Cost: 0.8776821 | Batch Acc: 0.7300000
+Iter:  1950 | Batch Cost: 0.8825500 | Batch Acc: 0.7500000
+Iter:  1960 | Batch Cost: 0.8664318 | Batch Acc: 0.6900000
+Iter:  1970 | Batch Cost: 0.9727657 | Batch Acc: 0.5000000
+Iter:  1980 | Batch Cost: 0.9053268 | Batch Acc: 0.8200000
+Iter:  1990 | Batch Cost: 0.8371741 | Batch Acc: 0.7100000
+Iter:  2000 | Batch Cost: 0.8409981 | Batch Acc: 0.7500000
+Iter:  2010 | Batch Cost: 0.9318333 | Batch Acc: 0.5400000
+Iter:  2020 | Batch Cost: 0.9040622 | Batch Acc: 0.5700000
+Iter:  2030 | Batch Cost: 0.8348604 | Batch Acc: 0.7000000
+Iter:  2040 | Batch Cost: 0.8976492 | Batch Acc: 0.6300000
+Iter:  2050 | Batch Cost: 0.8172854 | Batch Acc: 0.7400000
+Iter:  2060 | Batch Cost: 0.9319895 | Batch Acc: 0.5300000
+Iter:  2061 | Batch Cost: 0.9677766 | Batch Acc: 0.4800000
+
+Training loop finished. Total training time: 1130.97 seconds.
+
+--- Running Quick Validation Check ---
+Validation Cost: 0.9730088 | Validation Accuracy: 0.4700000
+Validation check completed in: 2.33 seconds.
+
+--- Evaluating model on test data ---
+Test set is large, processing in mini-batches.
+--- Test Results ---
+Acurácia (Overall): 0.4673
+Acurácia (Benign):  0.9743 (from 18600 samples)
+Acurácia (Attack):  0.1810 (from 32935 samples)
+Precisão: 0.6638
+Recall:   0.5777
+F1-Score: 0.4359
+--------------------
+Evaluation finished in: 225.87 seconds.

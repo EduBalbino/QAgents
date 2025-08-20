@@ -1,0 +1,881 @@
+%%%% Andrea
+
+%%% Classical ML
+%The bible
+@book{ML_bible,
+  author   = {Russell, Stuart and Norvig, Peter},
+  title    = {Artificial Intelligence A Modern Approach, Global Edition},
+  abstract = {For one or two-semester, undergraduate or graduate-level courses in Artificial Intelligence.
+The long-anticipated revision of this best-selling text offers the most comprehensive, up-to-date introduction to the theory and practice of artificial intelligence.}},
+  pages    = {1152},
+  publisher = {Pearson Deutschland},
+  year     = {2016},
+  isbn     = {9781292153964},
+  doi      = {}
+}
+
+%Survey, perspectives
+@article{ML_rev,
+    author = {M. I. Jordan  and T. M. Mitchell },
+    title = {Machine learning: Trends, perspectives, and prospects},
+    journal = {Science},
+    volume = {349},
+    number = {6245},
+    pages = {255-260},
+    year = {2015},
+    doi = {10.1126/science.aaa8415},
+    abstract = {Machine learning addresses the question of how to build computers that improve automatically through experience. It is one of today’s most rapidly growing technical fields, lying at the intersection of computer science and statistics, and at the core of artificial intelligence and data science. Recent progress in machine learning has been driven both by the development of new learning algorithms and theory and by the ongoing explosion in the availability of online data and low-cost computation. The adoption of data-intensive machine-learning methods can be found throughout science, technology and commerce, leading to more evidence-based decision-making across many walks of life, including health care, manufacturing, education, financial modeling, policing, and marketing.}
+}
+
+
+%%% QC basi
+@book{QC_bible, 
+    place={Cambridge}, 
+    title={Quantum Computation and Quantum Information: 10th Anniversary Edition}, 
+    DOI={10.1017/CBO9780511976667}, 
+    publisher={Cambridge University Press},
+    author={Nielsen, Michael A. and Chuang, Isaac L.}, 
+    year={2010}
+}
+
+@article{QSim_Lloyd,
+    author = {Seth Lloyd },
+    title = {Universal Quantum Simulators},
+    journal = {Science},
+    volume = {273},
+    number = {5278},
+    pages = {1073-1078},
+    year = {1996},
+    doi = {10.1126/science.273.5278.1073},
+    abstract = {Feynman's 1982 conjecture, that quantum computers can be programmed to simulate any local quantum system, is shown to be correct.}
+    }
+
+@INPROCEEDINGS{Shor,
+  author={Shor, P.W.},
+  booktitle={Proceedings 35th Annual Symposium on Foundations of Computer Science}, 
+  title={Algorithms for quantum computation: discrete logarithms and factoring}, 
+  year={1994},
+  volume={},
+  number={},
+  pages={124-134},
+  doi={10.1109/SFCS.1994.365700}}
+
+
+%%% VQE Survey
+@article{TILLY20221,
+    title = {The Variational Quantum Eigensolver: A review of methods and best practices},
+    journal = {Physics Reports},
+    volume = {986},
+    pages = {1-128},
+    year = {2022},
+    note = {The Variational Quantum Eigensolver: a review of methods and best practices},
+    issn = {0370-1573},
+    doi = {https://doi.org/10.1016/j.physrep.2022.08.003},
+    author = {Jules Tilly and Hongxiang Chen and Shuxiang Cao and Dario Picozzi and Kanav Setia and Ying Li and Edward Grant and Leonard Wossnig and Ivan Rungger and George H. Booth and Jonathan Tennyson},
+    keywords = {Quantum computing, Variational methods, Noisy intermediate scale quantum devices, Electronic structure, Quantum chemistry, Many-body physics},
+    abstract = {The variational quantum eigensolver (or VQE), first developed by Peruzzo et al. (2014), has received significant attention from the research community in recent years. It uses the variational principle to compute the ground state energy of a Hamiltonian, a problem that is central to quantum chemistry and condensed matter physics. Conventional computing methods are constrained in their accuracy due to the computational limits facing exact modeling of the exponentially growing electronic wavefunction for these many-electron systems. The VQE may be used to model these complex wavefunctions in polynomial time, making it one of the most promising near-term applications for quantum computing. One important advantage is that variational algorithms have been shown to present some degree of resilience to the noise in the quantum hardware. Finding a path to navigate the relevant literature has rapidly become an overwhelming task, with many methods promising to improve different parts of the algorithm, but without clear descriptions of how the diverse parts fit together. The potential practical advantages of the algorithm are also widely discussed in the literature, but with varying conclusions. Despite strong theoretical underpinnings suggesting excellent scaling of individual VQE components, studies have pointed out that their various pre-factors could be too large to reach a quantum computing advantage over conventional methods. This review aims at disentangling the relevant literature to provide a comprehensive overview of the progress that has been made on the different parts of the algorithm, and to discuss future areas of research that are fundamental for the VQE to deliver on its promises. All the different components of the algorithm are reviewed in detail. These include the representation of Hamiltonians and wavefunctions on a quantum computer, the optimization process to find ground state energies, the post processing mitigation of quantum errors, and suggested best practices. We identify four main areas of future research: (1) optimal measurement schemes for reduction of circuit repetitions required; (2) large scale parallelization across many quantum computers; (3) ways to overcome the potential appearance of vanishing gradients in the optimization process for large systems, and how the number of iterations required for the optimization scales with system size; (4) the extent to which VQE suffers for quantum noise, and whether this noise can be mitigated in a tractable manner. The answers to these open research questions will determine the routes for the VQE to achieve quantum advantage as the quantum computing hardware scales up and as the noise levels are reduced.}
+}
+
+@article{Moll_2018,
+    doi = {10.1088/2058-9565/aab822},
+    year = {2018},
+    month = {jun},
+    publisher = {IOP Publishing},
+    volume = {3},
+    number = {3},
+    pages = {030503},
+    author = {Nikolaj Moll and Panagiotis Barkoutsos and Lev S Bishop and Jerry M Chow and Andrew Cross and Daniel J Egger and Stefan Filipp and Andreas Fuhrer and Jay M Gambetta and Marc Ganzhorn and Abhinav Kandala and Antonio Mezzacapo and Peter Müller and Walter Riess and Gian Salis and John Smolin and Ivano Tavernelli and Kristan Temme},
+    title = {Quantum optimization using variational algorithms on near-term quantum devices},
+    journal = {Quantum Science and Technology},
+    abstract = {Universal fault-tolerant quantum computers will require error-free execution of long sequences of quantum gate operations, which is expected to involve millions of physical qubits. Before the full power of such machines will be available, near-term quantum devices will provide several hundred qubits and limited error correction. Still, there is a realistic prospect to run useful algorithms within the limited circuit depth of such devices. Particularly promising are optimization algorithms that follow a hybrid approach: the aim is to steer a highly entangled state on a quantum system to a target state that minimizes a cost function via variation of some gate parameters. This variational approach can be used both for classical optimization problems as well as for problems in quantum chemistry. The challenge is to converge to the target state given the limited coherence time and connectivity of the qubits. In this context, the quantum volume as a metric to compare the power of near-term quantum devices is discussed. With focus on chemistry applications, a general description of variational algorithms is provided and the mapping from fermions to qubits is explained. Coupled-cluster and heuristic trial wave-functions are considered for efficiently finding molecular ground states. Furthermore, simple error-mitigation schemes are introduced that could improve the accuracy of determining ground-state energies. Advancing these techniques may lead to near-term demonstrations of useful quantum computation with systems containing several hundred qubits.}
+}
+
+
+%%% QVA Theory
+@ARTICLE{VQA_Cerezo,
+  title    = "Variational quantum algorithms",
+  author   = "Cerezo, M and Arrasmith, Andrew and Babbush, Ryan and Benjamin,
+              Simon C and Endo, Suguru and Fujii, Keisuke and McClean, Jarrod R
+              and Mitarai, Kosuke and Yuan, Xiao and Cincio, Lukasz and Coles,
+              Patrick J",
+  abstract = "Applications such as simulating complicated quantum systems or
+              solving large-scale linear algebra problems are very challenging
+              for classical computers, owing to the extremely high
+              computational cost. Quantum computers promise a solution,
+              although fault-tolerant quantum computers will probably not be
+              available in the near future. Current quantum devices have
+              serious constraints, including limited numbers of qubits and
+              noise processes that limit circuit depth. Variational quantum
+              algorithms (VQAs), which use a classical optimizer to train a
+              parameterized quantum circuit, have emerged as a leading strategy
+              to address these constraints. VQAs have now been proposed for
+              essentially all applications that researchers have envisaged for
+              quantum computers, and they appear to be the best hope for
+              obtaining quantum advantage. Nevertheless, challenges remain,
+              including the trainability, accuracy and efficiency of VQAs. Here
+              we overview the field of VQAs, discuss strategies to overcome
+              their challenges and highlight the exciting prospects for using
+              them to obtain quantum advantage.",
+  journal  = "Nature Reviews Physics",
+  volume   =  3,
+  number   =  9,
+  pages    = "625--644",
+  month    =  sep,
+  year     =  2021,
+  doi={10.1038/s42254-021-00348-9}
+}
+
+%Old
+@article{PhysRevA.92.042303,
+  title = {Progress towards practical quantum variational algorithms},
+  author = {Wecker, Dave and Hastings, Matthew B. and Troyer, Matthias},
+  journal = {Phys. Rev. A},
+  volume = {92},
+  issue = {4},
+  pages = {042303},
+  numpages = {10},
+  year = {2015},
+  month = {Oct},
+  publisher = {American Physical Society},
+  doi = {10.1103/PhysRevA.92.042303}
+}
+
+
+
+
+%%% QML Generic
+
+%Excellent survey
+@ARTICLE{QML_challenges_Cerezo,
+  title    = "Challenges and opportunities in quantum machine learning",
+  author   = "Cerezo, M and Verdon, Guillaume and Huang, Hsin-Yuan and Cincio,
+              Lukasz and Coles, Patrick J",
+  abstract = "At the intersection of machine learning and quantum computing,
+              quantum machine learning has the potential of accelerating data
+              analysis, especially for quantum data, with applications for
+              quantum materials, biochemistry and high-energy physics.
+              Nevertheless, challenges remain regarding the trainability of
+              quantum machine learning models. Here we review current methods
+              and applications for quantum machine learning. We highlight
+              differences between quantum and classical machine learning, with
+              a focus on quantum neural networks and quantum deep learning.
+              Finally, we discuss opportunities for quantum advantage with
+              quantum machine learning.",
+  journal  = "Nature Computational Science",
+  volume   =  2,
+  number   =  9,
+  pages    = "567--576",
+  month    =  sep,
+  year     =  2022,
+  doi={10.1038/s43588-022-00311-3}
+}
+
+
+@article{QML_challenges_Perdomo,
+    doi = {10.1088/2058-9565/aab859},
+    year = {2018},
+    month = {jun},
+    publisher = {IOP Publishing},
+    volume = {3},
+    number = {3},
+    pages = {030502},
+    author = {Alejandro Perdomo-Ortiz and Marcello Benedetti and John Realpe-Gómez and Rupak Biswas},
+    title = {Opportunities and challenges for quantum-assisted machine learning in near-term quantum computers},
+    journal = {Quantum Science and Technology},
+    abstract = {With quantum computing technologies nearing the era of commercialization and quantum supremacy, machine learning (ML) appears as one of the promising ‘killer’ applications. Despite significant effort, there has been a disconnect between most quantum ML proposals, the needs of ML practitioners, and the capabilities of near-term quantum devices to demonstrate quantum enhancement in the near future. In this contribution to the focus collection ‘What would you do with 1000 qubits?’, we provide concrete examples of intractable ML tasks that could be enhanced with near-term devices. We argue that to reach this target, the focus should be on areas where ML researchers are struggling, such as generative models in unsupervised and semi-supervised learning, instead of the popular and more tractable supervised learning techniques. We also highlight the case of classical datasets with potential quantum-like statistical correlations where quantum models could be more suitable. We focus on hybrid quantum–classical approaches and illustrate some of the key challenges we foresee for near-term implementations. Finally, we introduce the quantum-assisted Helmholtz machine (QAHM), an attempt to use near-term quantum devices to tackle high-dimensional datasets of continuous variables. Instead of using quantum computers to assist deep learning, as previous approaches do, the QAHM uses deep learning to extract a low-dimensional binary representation of data, suitable for relatively small quantum processors which can assist the training of an unsupervised generative model. Although we illustrate this concept on a quantum annealer, other quantum platforms could benefit as well from this hybrid quantum–classical framework.}
+}
+
+@article{Schuld_first,
+    author={Schuld , Maria and Sinayskiy , Ilya and Petruccione , Francesco},
+    title={An introduction to quantum machine learning},
+    journal={Contemporary Physics},
+    year={2015},
+    month={Apr},
+    day={03},
+    publisher={Taylor {\&} Francis},
+    volume={56},
+    number={2},
+    pages={172-185},
+    issn={0010-7514},
+    doi={10.1080/00107514.2014.964942}
+}
+
+@article{Ciliberto,
+    author = {Ciliberto, Carlo  and Herbster, Mark  and Ialongo, Alessandro Davide  and Pontil, Massimiliano  and Rocchetto, Andrea  and Severini, Simone  and Wossnig, Leonard },
+    title = {Quantum machine learning: a classical perspective},
+    journal = {Proceedings of the Royal Society A: Mathematical, Physical and Engineering Sciences},
+    volume = {474},
+    number = {2209},
+    pages = {20170551},
+    year = {2018},
+    doi = {10.1098/rspa.2017.0551},
+        abstract = { Recently, increased computational power and data availability, as well as algorithmic advances, have led machine learning (ML) techniques to impressive results in regression, classification, data generation and reinforcement learning tasks. Despite these successes, the proximity to the physical limits of chip fabrication alongside the increasing size of datasets is motivating a growing number of researchers to explore the possibility of harnessing the power of quantum computation to speed up classical ML algorithms. Here we review the literature in quantum ML and discuss perspectives for a mixed readership of classical ML and quantum computation experts. Particular emphasis will be placed on clarifying the limitations of quantum algorithms, how they compare with their best classical counterparts and why quantum resources are expected to provide advantages for learning problems. Learning in the presence of noise and certain computationally hard problems in ML are identified as promising directions for the field. Practical questions, such as how to upload classical data into quantum form, will also be addressed. }  
+}
+
+%Foundations
+@ARTICLE{Biamonte_wittek,
+  title    = "Quantum machine learning",
+  author   = "Biamonte, Jacob and Wittek, Peter and Pancotti, Nicola and
+              Rebentrost, Patrick and Wiebe, Nathan and Lloyd, Seth",
+  abstract = "Fuelled by increasing computer power and algorithmic advances,
+              machine learning techniques have become powerful tools for
+              finding patterns in data. Quantum systems produce atypical
+              patterns that classical systems are thought not to produce
+              efficiently, so it is reasonable to postulate that quantum
+              computers may outperform classical computers on machine learning
+              tasks. The field of quantum machine learning explores how to
+              devise and implement quantum software that could enable machine
+              learning that is faster than that of classical computers. Recent
+              work has produced quantum algorithms that could act as the
+              building blocks of machine learning programs, but the hardware
+              and software challenges are still considerable.",
+  journal  = "Nature",
+  volume   =  549,
+  number   =  7671,
+  pages    = "195--202",
+  month    =  sep,
+  year     =  2017,
+doi={10.1038/nature23474}
+}
+
+%Very important
+@article{Schuld-basics-2,
+  title = {Circuit-centric quantum classifiers},
+  author = {Schuld, Maria and Bocharov, Alex and Svore, Krysta M. and Wiebe, Nathan},
+  journal = {Phys. Rev. A},
+  volume = {101},
+  issue = {3},
+  pages = {032308},
+  numpages = {8},
+  year = {2020},
+  month = {Mar},
+  publisher = {American Physical Society},
+  doi = {10.1103/PhysRevA.101.032308}
+}
+
+%Very important
+@article{Schuld-basics_1,
+  title = {Quantum Machine Learning in Feature Hilbert Spaces},
+  author = {Schuld, Maria and Killoran, Nathan},
+  journal = {Phys. Rev. Lett.},
+  volume = {122},
+  issue = {4},
+  pages = {040504},
+  numpages = {6},
+  year = {2019},
+  month = {Feb},
+  publisher = {American Physical Society},
+  doi = {10.1103/PhysRevLett.122.040504}
+}
+
+@inproceedings{10.1145/237814.237866,
+author = {Grover, Lov K.},
+title = {A fast quantum mechanical algorithm for database search},
+year = {1996},
+isbn = {0897917855},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/237814.237866},
+doi = {10.1145/237814.237866},
+booktitle = {Proceedings of the Twenty-Eighth Annual ACM Symposium on Theory of Computing},
+pages = {212–219},
+numpages = {8},
+location = {Philadelphia, Pennsylvania, USA},
+series = {STOC '96}
+}
+
+@ARTICLE{9748970,
+  author={Li, Yuanjian and Aghvami, A. Hamid and Dong, Daoyi},
+  journal={IEEE Transactions on Wireless Communications}, 
+  title={Path Planning for Cellular-Connected UAV: A DRL Solution With Quantum-Inspired Experience Replay}, 
+  year={2022},
+  volume={21},
+  number={10},
+  pages={7897-7912},
+  keywords={Autonomous aerial vehicles;Wireless communication;Optimization;Navigation;Trajectory;Antenna radiation patterns;Reinforcement learning;Drone;trajectory design;deep reinforcement learning;quantum-inspired experience replay},
+  doi={10.1109/TWC.2022.3162749}}
+
+%%% QML Embedding
+@article{Embedding_effects,
+  title = {Effect of data encoding on the expressive power of variational quantum-machine-learning models},
+  author = {Schuld, Maria and Sweke, Ryan and Meyer, Johannes Jakob},
+  journal = {Phys. Rev. A},
+  volume = {103},
+  issue = {3},
+  pages = {032430},
+  numpages = {12},
+  year = {2021},
+  month = {Mar},
+  publisher = {American Physical Society},
+  doi = {10.1103/PhysRevA.103.032430}
+}
+
+@article{Embedding_2,
+  doi = {10.22331/q-2020-02-06-226},
+  title = {Data re-uploading for a universal quantum classifier},
+  author = {P{\'{e}}rez-Salinas, Adri{\'{a}}n and Cervera-Lierta, Alba and Gil-Fuster, Elies and Latorre, Jos{\'{e}} I.},
+  journal = {Quantum}},
+  issn = {2521-327X},
+  publisher = {Verein zur F{\"{o}}rderung des Open Access Publizierens in den Quantenwissenschaften}},
+  volume = {4},
+  pages = {226},
+  month = feb,
+  year = {2020}
+}
+
+@misc{Embedding_1,
+      title={Quantum embeddings for machine learning}, 
+      author={Seth Lloyd and Maria Schuld and Aroosa Ijaz and Josh Izaac and Nathan Killoran},
+      year={2020},
+      eprint={2001.03622},
+      archivePrefix={arXiv},
+      primaryClass={quant-ph},
+      doi={10.48550/arXiv.2001.03622}
+}
+
+
+%%% QML Applications
+
+%Finance
+@article{PhysRevResearch.4.023136,
+  title = {Approximate amplitude encoding in shallow parameterized quantum circuits and its application to financial market indicators},
+  author = {Nakaji, Kouhei and Uno, Shumpei and Suzuki, Yohichi and Raymond, Rudy and Onodera, Tamiya and Tanaka, Tomoki and Tezuka, Hiroyuki and Mitsuda, Naoki and Yamamoto, Naoki},
+  journal = {Phys. Rev. Res.},
+  volume = {4},
+  issue = {2},
+  pages = {023136},
+  numpages = {20},
+  year = {2022},
+  month = {May},
+  publisher = {American Physical Society},
+  doi = {10.1103/PhysRevResearch.4.023136}
+}
+
+%QCNN
+@ARTICLE{QCNN,
+  title    = "Quantum convolutional neural networks",
+  author   = "Cong, Iris and Choi, Soonwon and Lukin, Mikhail D",
+  abstract = "Neural network-based machine learning has recently proven
+              successful for many complex applications ranging from image
+              recognition to precision medicine. However, its direct
+              application to problems in quantum physics is challenging due to
+              the exponential complexity of many-body systems. Motivated by
+              recent advances in realizing quantum information processors, we
+              introduce and analyse a quantum circuit-based algorithm inspired
+              by convolutional neural networks, a highly effective model in
+              machine learning. Our quantum convolutional neural network (QCNN)
+              uses only O(log(N)) variational parameters for input sizes of N
+              qubits, allowing for its efficient training and implementation on
+              realistic, near-term quantum devices. To explicitly illustrate
+              its capabilities, we show that QCNNs can accurately recognize
+              quantum states associated with a one-dimensional
+              symmetry-protected topological phase, with performance surpassing
+              existing approaches. We further demonstrate that QCNNs can be
+              used to devise a quantum error correction scheme optimized for a
+              given, unknown error model that substantially outperforms known
+              quantum codes of comparable complexity. The potential
+              experimental realizations and generalizations of QCNNs are also
+              discussed.",
+  journal  = "Nature Physics",
+  volume   =  15,
+  number   =  12,
+  pages    = "1273--1278",
+  month    =  dec,
+  year     =  2019,
+doi={10.1038/s41567-019-0648-8}
+}
+
+
+%QML in HEP
+@article{QML_HEP,
+    doi = {10.1088/2632-2153/abc17d},
+    year = {2021},
+    month = {mar},
+    publisher = {IOP Publishing},
+    volume = {2},
+    number = {1},
+    pages = {011003},
+    author = {Wen Guan and Gabriel Perdue and Arthur Pesah and Maria Schuld and Koji Terashi and Sofia Vallecorsa and Jean-Roch Vlimant},
+    title = {Quantum machine learning in high energy physics},
+    journal = {Machine Learning: Science and Technology},
+    abstract = {Machine learning has been used in high energy physics (HEP) for a long time, primarily at the analysis level with supervised classification. Quantum computing was postulated in the early 1980s as way to perform computations that would not be tractable with a classical computer. With the advent of noisy intermediate-scale quantum computing devices, more quantum algorithms are being developed with the aim at exploiting the capacity of the hardware for machine learning applications. An interesting question is whether there are ways to apply quantum machine learning to HEP. This paper reviews the first generation of ideas that use quantum machine learning on problems in HEP and provide an outlook on future applications.}
+}
+
+%QML in Annealers
+@ARTICLE{Nath2021-yt,
+  title    = "A Review of Machine Learning Classification Using Quantum
+              Annealing for {Real-World} Applications",
+  author   = "Nath, Rajdeep Kumar and Thapliyal, Himanshu and Humble, Travis S",
+  abstract = "Optimizing the training of a machine learning pipeline helps in
+              reducing training costs and improving model performance. One such
+              optimizing strategy is quantum annealing, which is an emerging
+              computing paradigm that has shown potential in optimizing the
+              training of a machine learning model. The implementation of a
+              physical quantum annealer has been realized by D-wave systems and
+              is available to the research community for experiments. Recent
+              experimental results on a variety of machine learning
+              applications using quantum annealing have shown interesting
+              results where the performance of classical machine learning
+              techniques is limited by limited training data and high
+              dimensional features. This article explores the application of
+              D-wave's quantum annealer for optimizing machine learning
+              pipelines for real-world classification problems. We review the
+              application domains on which a physical quantum annealer has been
+              used to train machine learning classifiers. We discuss and
+              analyze the experiments performed on the D-Wave quantum annealer
+              for applications such as image recognition, remote sensing
+              imagery, computational biology, and particle physics. We discuss
+              the possible advantages and the problems for which quantum
+              annealing is likely to be advantageous over classical
+              computation.",
+  journal  = "SN Computer Science",
+  volume   =  2,
+  number   =  5,
+  pages    = "365",
+  month    =  jul,
+  year     =  2021,
+doi={10.1007/s42979-021-00751-0}
+}
+
+% QML for drug discovery
+@article{QML_drugs,
+    doi = {10.1088/2632-2153/acb900},
+    year = {2023},
+    month = {feb},
+    publisher = {IOP Publishing},
+    volume = {4},
+    number = {1},
+    pages = {015023},
+    author = {Stefano Mensa and Emre Sahin and Francesco Tacchino and Panagiotis Kl Barkoutsos and Ivano Tavernelli},
+    title = {Quantum machine learning framework for virtual screening in drug discovery: a prospective quantum advantage},
+    journal = {Machine Learning: Science and Technology},
+    abstract = {Machine Learning for ligand based virtual screening (LB-VS) is an important in-silico tool for discovering new drugs in a faster and cost-effective manner, especially for emerging diseases such as COVID-19. In this paper, we propose a general-purpose framework combining a classical Support Vector Classifier algorithm with quantum kernel estimation for LB-VS on real-world databases, and we argue in favor of its prospective quantum advantage. Indeed, we heuristically prove that our quantum integrated workflow can, at least in some relevant instances, provide a tangible advantage compared to state-of-art classical algorithms operating on the same datasets, showing strong dependence on target and features selection method. Finally, we test our algorithm on IBM Quantum processors using ADRB2 and COVID-19 datasets, showing that hardware simulations provide results in line with the predicted performances and can surpass classical equivalents.}
+}
+
+%Noisy intermediate-scale QC
+@ARTICLE{Havlicek2019-gv,
+  title    = "Supervised learning with quantum-enhanced feature spaces",
+  author   = "Havl{\'\i}{\v c}ek, Vojt{\v e}ch and C{\'o}rcoles, Antonio D and
+              Temme, Kristan and Harrow, Aram W and Kandala, Abhinav and Chow,
+              Jerry M and Gambetta, Jay M",
+  abstract = "Machine learning and quantum computing are two technologies that
+              each have the potential to alter how computation is performed to
+              address previously untenable problems. Kernel methods for machine
+              learning are ubiquitous in pattern recognition, with support
+              vector machines (SVMs) being the best known method for
+              classification problems. However, there are limitations to the
+              successful solution to such classification problems when the
+              feature space becomes large, and the kernel functions become
+              computationally expensive to estimate. A core element in the
+              computational speed-ups enabled by quantum algorithms is the
+              exploitation of an exponentially large quantum state space
+              through controllable entanglement and interference. Here we
+              propose and experimentally implement two quantum algorithms on a
+              superconducting processor. A key component in both methods is the
+              use of the quantum state space as feature space. The use of a
+              quantum-enhanced feature space that is only efficiently
+              accessible on a quantum computer provides a possible path to
+              quantum advantage. The algorithms solve a problem of supervised
+              learning: the construction of a classifier. One method, the
+              quantum variational classifier, uses a variational quantum
+              circuit1,2 to classify the data in a way similar to the method of
+              conventional SVMs. The other method, a quantum kernel estimator,
+              estimates the kernel function on the quantum computer and
+              optimizes a classical SVM. The two methods provide tools for
+              exploring the applications of noisy intermediate-scale quantum
+              computers3 to machine learning.",
+  journal  = "Nature",
+  volume   =  567,
+  number   =  7747,
+  pages    = "209--212",
+  month    =  mar,
+  year     =  2019,
+doi={10.1038/s41586-019-0980-2}
+}
+
+
+%%%
+
+@article{Schuld_2020,
+	doi = {10.1103/physreva.101.032308},
+	year = 2020,
+	month = {mar},
+	publisher = {American Physical Society ({APS})},
+	volume = {101},
+	number = {3},
+	author = {Maria Schuld and Alex Bocharov and Krysta M. Svore and Nathan Wiebe},
+	title = {Circuit-centric quantum classifiers},
+	journal = {Physical Review A}
+}
+
+
+@misc{StronglyEntanglingLayer,
+    title = {Strongly Entangling Layers},
+    howpublished={\url{https://docs.pennylane.ai/en/stable/code/api/pennylane.StronglyEntanglingLayers.html}},
+    note = {Accessed: March 2024}                   
+}
+
+
+
+@misc{bergholm2022pennylane,
+      title={PennyLane: Automatic differentiation of hybrid quantum-classical computations}, 
+      author={Ville Bergholm and Josh Izaac and Maria Schuld and Christian Gogolin and Shahnawaz Ahmed and Vishnu Ajith and M. Sohaib Alam and Guillermo Alonso-Linaje and B. AkashNarayanan and Ali Asadi and Juan Miguel Arrazola and Utkarsh Azad and Sam Banning and Carsten Blank and Thomas R Bromley and Benjamin A. Cordier and Jack Ceroni and Alain Delgado and Olivia Di Matteo and Amintor Dusko and Tanya Garg and Diego Guala and Anthony Hayes and Ryan Hill and Aroosa Ijaz and Theodor Isacsson and David Ittah and Soran Jahangiri and Prateek Jain and Edward Jiang and Ankit Khandelwal and Korbinian Kottmann and Robert A. Lang and Christina Lee and Thomas Loke and Angus Lowe and Keri McKiernan and Johannes Jakob Meyer and J. A. Montañez-Barrera and Romain Moyard and Zeyue Niu and Lee James O'Riordan and Steven Oud and Ashish Panigrahi and Chae-Yeun Park and Daniel Polatajko and Nicolás Quesada and Chase Roberts and Nahum Sá and Isidor Schoch and Borun Shi and Shuli Shu and Sukin Sim and Arshpreet Singh and Ingrid Strandberg and Jay Soni and Antal Száva and Slimane Thabet and Rodrigo A. Vargas-Hernández and Trevor Vincent and Nicola Vitucci and Maurice Weber and David Wierichs and Roeland Wiersema and Moritz Willmann and Vincent Wong and Shaoming Zhang and Nathan Killoran},
+      year={2022},
+      eprint={1811.04968},
+      archivePrefix={arXiv},
+      primaryClass={quant-ph},
+      doi={10.48550/arXiv.1811.04968}
+}
+
+
+@misc{mottonen2004transformation,
+      title={Transformation of quantum states using uniformly controlled rotations}, 
+      author={Mikko Mottonen and Juha J. Vartiainen and Ville Bergholm and Martti M. Salomaa},
+      year={2004},
+      eprint={quant-ph/0407010},
+      archivePrefix={arXiv},
+      primaryClass={quant-ph}
+}
+
+@article{jolliffe2016principal,
+  title={Principal component analysis: a review and recent developments},
+  author={Jolliffe, Ian T and Cadima, Jorge},
+  journal={Philosophical transactions of the royal society A: Mathematical, Physical and Engineering Sciences},
+  volume={374},
+  number={2065},
+  pages={20150202},
+  year={2016},
+  publisher={The Royal Society Publishing},
+    doi={10.1098/rsta.2015.0202}
+}
+
+@article{kingma2014adam,
+    title={Adam: A Method for Stochastic Optimization}, 
+      author={Diederik P. Kingma and Jimmy Ba},
+      year={2017},
+      eprint={1412.6980},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+    doi={10.48550/arXiv.1412.6980}
+}
+
+@misc{blake1998uci,
+  title={The UCI Machine Learning Repository},
+  author={Markelle Kelly, Rachel Longjohn, Kolby Nottingham},
+note = {[Online],
+  \url{https://archive.ics.uci.edu},
+}}
+
+@misc{misc_wine_109,
+  author       = {Aeberhard,Stefan and Forina,M.},
+  title        = {Wine}},
+  year         = {1991},
+  howpublished = {UCI Machine Learning Repository},
+  doi         = {10.24432/C5PC7J}
+}
+
+@misc{diabetes_dataset,
+title = {Diabetes Dataset},
+howpublished = {\url{https://www.kaggle.com/datasets/mathchi/diabetes-data-set}},
+note = {Accessed: March 2024}
+}
+
+@article{perez2020data,
+  title={Data re-uploading for a universal quantum classifier},
+  author={P{\'e}rez-Salinas, Adri{\'a}n and Cervera-Lierta, Alba and Gil-Fuster, Elies and Latorre, Jos{\'e} I},
+  journal={Quantum},
+  volume={4},
+  pages={226},
+  year={2020},
+  publisher={Verein zur F{\"o}rderung des Open Access Publizierens in den Quantenwissenschaften},
+doi={https://doi.org/10.22331/q-2020-02-06-226}
+}
+
+@book{nielsen2010quantum,
+  title={Quantum computation and quantum information},
+  author={Nielsen, Michael A and Chuang, Isaac L},
+  year={2010},
+  publisher={Cambridge university press}
+}
+
+@book{schuld2018supervised,
+  title={Supervised learning with quantum computers},
+  author={Schuld, Maria and Petruccione, Francesco},
+  volume={17},
+  year={2018},
+  publisher={Springer}
+}
+
+@inbook{kurita2019principal,
+  author="Kurita, Takio",
+title="Principal Component Analysis (PCA)",
+bookTitle="Computer Vision: A Reference Guide",
+year="2019",
+publisher="Springer International Publishing",
+address="Cham",
+pages="1--4",
+isbn="978-3-030-03243-2",
+doi="10.1007/978-3-030-03243-2_649-1"
+}
+
+@article{xu2005survey,
+  title={Survey of clustering algorithms},
+  author={Rui Xu and Wunsch, D.},
+  journal={IEEE Transactions on Neural Networks}, 
+  title={Survey of clustering algorithms}, 
+  year={2005},
+  volume={16},
+  number={3},
+  pages={645-678},
+  keywords={Clustering algorithms;Machine learning algorithms;Data analysis;Humans;Statistics;Computer science;Machine learning;Application software;Traveling salesman problems;Bioinformatics;Adaptive resonance theory (ART);clustering;clustering algorithm;cluster validation;neural networks;proximity;self-organizing feature map (SOFM)},
+  doi={10.1109/TNN.2005.845141}
+}
+
+
+@inproceedings{paszke2017automatic,
+  author = {Paszke, Adam and Gross, Sam and Chintala, Soumith and Chanan, Gregory and Yang, Edward and DeVito, Zachary and Lin, Zeming and Desmaison, Alban and Antiga, Luca and Lerer, Adam},
+  biburl = {https://www.bibsonomy.org/bibtex/2d9d4911f0310e65b1d54ff4c13f11aad/ross_mck},
+  booktitle = {NIPS 2017 Workshop on Autodiff},
+  interhash = {21530dd0202e55d3eb1ada151e09c499},
+  intrahash = {d9d4911f0310e65b1d54ff4c13f11aad},
+  keywords = {extraperi linbot2},
+  location = {Long Beach, California, USA},
+  timestamp = {2019-09-26T11:31:24.000+0200},
+  title = {Automatic Differentiation in PyTorch},
+  year = 2017
+}
+
+@book{Goodfellow-et-al-2016,
+    title={Deep Learning},
+    author={Ian Goodfellow and Yoshua Bengio and Aaron Courville},
+    publisher={MIT Press},
+    year={2016}
+}
+
+
+
+@inproceedings{fauzi2022analysis,
+  author={Fauzi, Rahmad and Zarlis, Muhammad and Mawengkang, Herman and Sihombing, Poltak},
+  booktitle={2022 6th International Conference on Electrical, Telecommunication and Computer Engineering (ELTICOM)}, 
+  title={Analysis of Several Quantum Encoding Methods Implemented on A Quantum Circuit Architecture to Improve Classification Accuracy}, 
+  year={2022},
+  volume={},
+  number={},
+  pages={152-154},
+  keywords={Training;Quantum computing;Quantum algorithm;Computer architecture;Transforms;Quantum state;Encoding;Quantum machine learning;Quantum encoding;architecture quantum circuit;accuracy;loss},
+  doi={10.1109/ELTICOM57747.2022.10038017}
+}
+
+
+
+@article{sierra2020tensorflow,
+  author={Sierra-Sosa, Daniel and Telahun, Michael and Elmaghraby, Adel},
+  journal={IEEE Access}, 
+  title={TensorFlow Quantum: Impacts of Quantum State Preparation on Quantum Machine Learning Performance}, 
+  year={2020},
+  volume={8},
+  number={},
+  pages={215246-215255},
+  keywords={Encoding;Computational modeling;Integrated circuit modeling;Qubit;Machine learning;Libraries;Logic gates;Amplitude encoding;machine learning;quantum computing;quantum information;state preparation},
+  doi={10.1109/ACCESS.2020.3040798}
+}
+
+
+
+@article{sierra2023data,
+  author={Sierra-Sosa, Daniel
+and Pal, Soham
+and Telahun, Michael},
+title={Data rotation and its influence on quantum encoding},
+journal={Quantum Information Processing},
+year={2023},
+month={Jan},
+day={23},
+volume={22},
+number={1},
+pages={89},
+abstract={Parametric quantum machine learning (QML) has been vastly studied over the last several years. These algorithms rely on hybrid implementations, where quantum methods define the models, and the parameters are update on classical devices. The encoding of classical data into quantum states within the Hilbert space is fundamental to training these hybrid models; this can be achieved in a number of ways. In this work, we focus on two of these methods, amplitude encoding and encoding via a second-order Pauli feature map. We compared their performances across two near-term QML models, quantum support vector classifier and variational quantum classifier. We found that amplitude encoding is significantly resilient to classical transformations of data. This work additionally introduces the concept of a rotation, applied to classical data as a preprocessing step. In our results, we observe that other encoding methods can significantly benefit from certain Cartesian rotations of the data. We expand this rotation to a larger {\$}{\$}{\{}n-D{\}}{\$}{\$}dataset and show the method's performance.},
+issn={1573-1332},
+doi={10.1007/s11128-023-03837-1}
+}
+
+@article{GONG2024129993,
+title = {Quantum convolutional neural network based on variational quantum circuits},
+journal = {Optics Communications},
+volume = {550},
+pages = {129993},
+year = {2024},
+issn = {0030-4018},
+doi = {https://doi.org/10.1016/j.optcom.2023.129993},
+url = {https://www.sciencedirect.com/science/article/pii/S0030401823007411},
+author = {Li-Hua Gong and Jun-Jie Pei and Tian-Feng Zhang and Nan-Run Zhou},
+keywords = {Quantum convolutional neural network, Pure variational quantum circuits, Tree-structured hybrid amplitude encoding, Image classification, Quantum machine learning},
+abstract = {Machine learning algorithms are becoming increasingly resource-intensive. In contrast to classical computing, quantum computing holds the potential with exponential advantages and promises to overcome the bottleneck in computing performance. Taking inspiration from the convolution and pooling operations of convolutional neural networks, a quantum convolutional neural network (QCNN) is designed based on pure variational quantum circuits. By combining the advantages of angle encoding and amplitude encoding, a tree-structured hybrid amplitude encoding method has been developed. This method provides flexibility and stability in adjusting the width and the depth of the quantum circuit required for data encoding. Experiments conducted on the MNIST dataset and the Fashion-MNIST dataset demonstrate that the QCNN achieves faster convergence speed and higher image classification accuracy than the classical convolutional neural networks. Specifically, the QCNN reaches convergence after just 50 iterations, whereas the classical counterpart requires more than 200 iterations to converge. Furthermore, when performing the PCA dimensionality reduction to 8, the QCNN with Circuit 6 achieves an accuracy of 98.54/% on the MNIST dataset, while the classical counterpart achieves only 86.32/%.}
+}
+
+
+@Article{Hur2022,
+author={Hur, Tak
+and Kim, Leeseok
+and Park, Daniel K.},
+title={Quantum convolutional neural network for classical data classification},
+journal={Quantum Machine Intelligence},
+year={2022},
+month={Feb},
+day={10},
+volume={4},
+number={1},
+pages={3},
+abstract={With the rapid advance of quantum machine learning, several proposals for the quantum-analogue of convolutional neural network (CNN) have emerged. In this work, we benchmark fully parameterized quantum convolutional neural networks (QCNNs) for classical data classification. In particular, we propose a quantum neural network model inspired by CNN that only uses two-qubit interactions throughout the entire algorithm. We investigate the performance of various QCNN models differentiated by structures of parameterized quantum circuits, quantum data encoding methods, classical data pre-processing methods, cost functions and optimizers on MNIST and Fashion MNIST datasets. In most instances, QCNN achieved excellent classification accuracy despite having a small number of free parameters. The QCNN models performed noticeably better than CNN models under the similar training conditions. Since the QCNN algorithm presented in this work utilizes fully parameterized and shallow-depth quantum circuits, it is suitable for Noisy Intermediate-Scale Quantum (NISQ) devices.},
+issn={2524-4914},
+doi={10.1007/s42484-021-00061-x},
+url={https://doi.org/10.1007/s42484-021-00061-x}
+}
+
+
+@article{https://doi.org/10.1049/qtc2.12032,
+author = {Weigold, Manuela and Barzen, Johanna and Leymann, Frank and Salm, Marie},
+title = {Encoding patterns for quantum algorithms},
+journal = {IET Quantum Communication},
+volume = {2},
+number = {4},
+pages = {141-152},
+keywords = {computational complexity, quantum computing techniques, quantum computing, quantum entanglement},
+doi = {https://doi.org/10.1049/qtc2.12032},
+url = {https://ietresearch.onlinelibrary.wiley.com/doi/abs/10.1049/qtc2.12032},
+eprint = {https://ietresearch.onlinelibrary.wiley.com/doi/pdf/10.1049/qtc2.12032},
+abstract = {Abstract As quantum computers are based on the laws of quantum mechanics, they are capable of solving certain problems faster than their classical counterparts. However, quantum algorithms with a theoretical speed-up often assume that data can be loaded efficiently. In general, the runtime complexity of the loading routine depends on (i) the data encoding that defines how the data is represented by the state of the quantum computer and (ii) the data itself. In some cases, loading the data requires at least exponential time that destroys a potential speed-up. And especially for the first generation of devices that are currently available, the resources (qubits and operations) needed to encode the data are limited. In this work, we, therefore, present six patterns that describe how data is handled by quantum computers.},
+year = {2021}
+}
+
+@misc{monnet2024understandingeffectsdataencoding,
+      title={Understanding the effects of data encoding on quantum-classical convolutional neural networks}, 
+      author={Maureen Monnet and Nermine Chaabani and Theodora-Augustina Dragan and Balthasar Schachtner and Jeanette Miriam Lorenz},
+      year={2024},
+      eprint={2405.03027},
+      archivePrefix={arXiv},
+      primaryClass={quant-ph},
+      url={https://arxiv.org/abs/2405.03027}, 
+}
+
+
+@INPROCEEDINGS {9951255,
+author = {A. Matic and M. Monnet and J. Lorenz and B. Schachtner and T. Messerer},
+booktitle = {2022 IEEE International Conference on Quantum Computing and Engineering (QCE)},
+title = {Quantum-classical convolutional neural networks in radiological image classification},
+year = {2022},
+volume = {},
+issn = {},
+pages = {56-66},
+abstract = {Quantum machine learning is receiving significant attention currently, but its usefulness in comparison to classical machine learning techniques for practical applications remains unclear. However, there are indications that certain quantum machine learning algorithms might result in improved training capabilities with respect to their classical counterparts - which might be particularly beneficial in situations with little training data available. Such situations naturally arise in medical classification tasks. Within this paper, different hybrid quantum-classical convolutional neural networks (QCCNN) with varying quantum circuit designs and encoding techniques are proposed. They are applied to two- and three-dimensional medical imaging data, e.g. featuring different, potentially malign, lesions in computed tomography scans. The performance of these QCCNNs is already similar to the one of their classical counterparts therefore encouraging further studies towards the direction of applying these algorithms within medical imaging tasks.},
+keywords = {training;three-dimensional displays;image coding;machine learning;encoding;convolutional neural networks;task analysis},
+doi = {10.1109/QCE53715.2022.00024},
+url = {https://doi.ieeecomputersociety.org/10.1109/QCE53715.2022.00024},
+publisher = {IEEE Computer Society},
+address = {Los Alamitos, CA, USA},
+month = {sep}
+}
+
+
+@INPROCEEDINGS{5597285,
+  author={Brodersen, Kay Henning and Ong, Cheng Soon and Stephan, Klaas Enno and Buhmann, Joachim M.},
+  booktitle={2010 20th International Conference on Pattern Recognition}, 
+  title={The Balanced Accuracy and Its Posterior Distribution}, 
+  year={2010},
+  volume={},
+  number={},
+  pages={3121-3124},
+  keywords={Accuracy;Training;Inference algorithms;Probabilistic logic;Machine learning;Prediction algorithms;Approximation algorithms;classification performance;generalizability;bias;class imbalance},
+  doi={10.1109/ICPR.2010.764}}
+
+
+
+@article{Farhi2018ClassificationWQ,
+  title={Classification with Quantum Neural Networks on Near Term Processors},
+  author={Edward Farhi and Hartmut Neven},
+  journal={arXiv: Quantum Physics},
+  year={2018},
+  url={https://api.semanticscholar.org/CorpusID:119037649}
+}
+
+
+@article{PhysRevResearch.2.033125,
+  title = {Expressive power of parametrized quantum circuits},
+  author = {Du, Yuxuan and Hsieh, Min-Hsiu and Liu, Tongliang and Tao, Dacheng},
+  journal = {Phys. Rev. Res.},
+  volume = {2},
+  issue = {3},
+  pages = {033125},
+  numpages = {16},
+  year = {2020},
+  month = {Jul},
+  publisher = {American Physical Society},
+  doi = {10.1103/PhysRevResearch.2.033125},
+  url = {https://link.aps.org/doi/10.1103/PhysRevResearch.2.033125}
+}
+
+
+@article{https://doi.org/10.1002/qute.201900070,
+author = {Sim, Sukin and Johnson, Peter D. and Aspuru-Guzik, Alán},
+title = {Expressibility and Entangling Capability of Parameterized Quantum Circuits for Hybrid Quantum-Classical Algorithms},
+journal = {Advanced Quantum Technologies},
+volume = {2},
+number = {12},
+pages = {1900070},
+keywords = {quantum algorithms, quantum circuits, quantum computation},
+doi = {https://doi.org/10.1002/qute.201900070},
+url = {https://onlinelibrary.wiley.com/doi/abs/10.1002/qute.201900070},
+eprint = {https://onlinelibrary.wiley.com/doi/pdf/10.1002/qute.201900070},
+abstract = {Abstract Parameterized quantum circuits (PQCs) play an essential role in the performance of many variational quantum algorithms. One challenge in implementing such algorithms is choosing an effective circuit that well represents the solution space while maintaining a low circuit depth and parameter count. To characterize and identify expressible, yet compact, circuits, several descriptors are proposed, including expressibility and entangling capability, that are statistically estimated from classical simulations. These descriptors are computed for different circuit structures, varying the qubit connectivity and selection of gates. From these simulations, circuit fragments that perform well with respect to the descriptors are identified. In particular, a substantial improvement in performance of two-qubit gates in a ring or all-to-all connected arrangement, compared to that of those on a line, is observed. Furthermore, improvement in both descriptors is achieved by sequences of controlled X-rotation gates compared to sequences of controlled Z-rotation gates. In addition, it is investigated how expressibility “saturates” with increased circuit depth, finding that the rate and saturated value appear to be distinguishing features of a PQC. While the correlation between each descriptor and algorithm performance remains to be investigated, methods and results from this study can be useful for algorithm development and design of experiments.},
+year = {2019}
+}
+
+@article{wold1987principal,
+  title={Principal component analysis},
+  author={Wold, Svante and Esbensen, Kim and Geladi, Paul},
+  journal={Chemometrics and intelligent laboratory systems},
+  volume={2},
+  number={1-3},
+  pages={37--52},
+  year={1987},
+  publisher={Elsevier}
+}
+
+
+
+@misc{processorservervlsi,
+    title = {Intel {X}eon {G}old 6134 Processor - Product Specification},
+    note = {[Online]  \url{https://ark.intel.com/content/www/us/en/ark/products/120493/intel-xeon-gold-6134-processor-24-75m-cache-3-20-ghz.html}, accessed 25-October-2021}
+}
+
+@article{Bernal_QC_chem_eng,
+author = {Bernal, David E. and Ajagekar, Akshay and Harwood, Stuart M. and Stober, Spencer T. and Trenev, Dimitar and You, Fengqi},
+title = {Perspectives of quantum computing for chemical engineering},
+journal = {AIChE Journal},
+volume = {68},
+number = {6},
+pages = {e17651},
+keywords = {chemical engineering, computational chemistry, machine learning, optimization, quantum computing and algorithms},
+doi = {https://doi.org/10.1002/aic.17651},
+url = {https://aiche.onlinelibrary.wiley.com/doi/abs/10.1002/aic.17651},
+eprint = {https://aiche.onlinelibrary.wiley.com/doi/pdf/10.1002/aic.17651},
+abstract = {Abstract Quantum computing has been attracting public attention recently. This interest is driven by the advancements in hardware, software, and algorithms required for its successful usage and the promise that it entails the potential acceleration of computational tasks compared to classical computing. This perspective article presents a short review on quantum computing, how this computational approach solves problems, and three fields that quantum computing can potentially impact the most while relevant to chemical engineering: computational chemistry, optimization, and machine learning. Here, we present a series of chemical engineering applications, the developments, potential improvements with respect to classical computing, and challenges that quantum computing faces for each of these fields. This article intends to provide a clear picture of the challenges and potential advantages that quantum technology may yield for chemical engineering, together with an invitation for our colleagues to join us in the adoption and development of quantum computing.},
+year = {2022}
+}
+
+
+@article{QML_drowsiness,
+title = {Quantum machine learning for drowsiness detection with EEG signals},
+journal = {Process Safety and Environmental Protection},
+volume = {186},
+pages = {1197-1213},
+year = {2024},
+issn = {0957-5820},
+doi = {https://doi.org/10.1016/j.psep.2024.04.032},
+url = {https://www.sciencedirect.com/science/article/pii/S0957582024003847},
+author = {Isis Didier Lins and Lavínia Maria Mendes Araújo and Caio Bezerra Souto Maior and Plínio Marcio da Silva Ramos and Márcio José das Chagas Moura and André Juan Ferreira-Martins and Rafael Chaves and Askery Canabarro},
+keywords = {EEG, Drowsiness detection, Quantum machine learning, Quantum neural networks, Diagnosis, Reliability engineering},
+abstract = {Human reliability is an increasingly important area in various fields for accident prevention. Monitoring human biological parameters, such as metabolic agents, through techniques like an electroencephalogram (EEG), data analysis can help detect patterns indicating drowsiness, a major cause of fatigue that may impact tasks in various industries, including oil and gas, aviation, naval, railway, and others that involve shift work. While traditional machine learning methods, such as Multilayer Perceptron (MLP), have been explored in the literature for EEG-based drowsiness detection, advancements in computing technology have brought quantum mechanics concepts into play, offering potential advantages in computational efficiency for problem-solving. This work explores drowsiness detection via Quantum Machine Learning (QML). EEG signals are preprocessed to extract features specific to this type of data, such as Higuchi Fractal Dimension, Complexity, and Mobility, as well as statistical features such as mean, variance, root mean square, peak-to-peak, and maximum amplitude. We employ different quantum circuit architectures involving operations such as rotation gates (Ry, Rz, Ry), and entangling gates (CNOT, CZ, and iSWAP). We also combine those configurations considering different numbers of layers (1, 5, and 10). The models are trained and compared with classical MLP, considering five subjects. The main findings indicate that one subject (10) showed better results with the classic MLP model. However, for two subjects (1 and 8), iSWAP gates with 1 and 10 layers were notable, whereas for the last two subjects (5 and 6), configurations of CZ gates with 1 and 10 layers displayed the best results. This proof-of-principle study shows that QML models are suitable for analyzing EEG data related to drowsiness and can be further improved as quantum computing continues to evolve.}
+}
+
+

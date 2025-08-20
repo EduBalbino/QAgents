@@ -1,0 +1,5 @@
+--- Starting experiment (DSL) ---
+Dataset loaded from data/PCA_CICIDS2017.csv. Shape: (500, 9)
+Features and labels extracted.
+Data split: X_train=(400, 8), X_test=(100, 8)
+Features scaled.
