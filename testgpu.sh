@@ -7,14 +7,10 @@
 #SBATCH --output=/home/eduardo.andrade/job_output_gpu_%j.out
 #SBATCH --error=/home/eduardo.andrade/job_error_gpu_%j.err
 #SBATCH --time=01:00:00
-# Request 1 node on GPU partition with 64 CPU tasks and all GPUs
 #SBATCH -p gpuq
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=64
-# Request all visible GPUs on the node (use one of the two lines below depending on your Slurm)
-#SBATCH --gpus-per-node=all
-##SBATCH --gres=gpu:all
-# Memory
+#SBATCH -p gpuq
+#SBATCH --gpus=2
 #SBATCH --mem=256G
 
 #=======================================================================
