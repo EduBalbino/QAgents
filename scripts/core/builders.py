@@ -309,6 +309,10 @@ def run(recipe: Recipe) -> None:
     num_qubits = X_train_scaled.shape[1]
     wires = list(range(num_qubits))
     dev_name = dev_cfg.get("name", "lightning.qubit")
+    # Allow environment override for device selection (e.g., QML_DEVICE=lightning.gpu)
+    env_device = os.environ.get("QML_DEVICE")
+    if env_device:
+        dev_name = env_device
     dev = qml.device(dev_name, wires=num_qubits)
     print(f"Quantum device '{dev_name}' initialized with {num_qubits} wires.")
 

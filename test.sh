@@ -9,6 +9,7 @@
 #SBATCH --time=01:00:00
 #SBATCH --nodes=3
 #SBATCH --ntasks-per-node=16
+#SBATCH --exclude=gpu01
 #SBATCH -p cpuq
 #SBATCH --mem=20G
 
