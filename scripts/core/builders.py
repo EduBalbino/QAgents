@@ -444,14 +444,15 @@ def run(recipe: Recipe) -> None:
     )
 
     # Test evaluation
+    # Compute predictions per-sample to ensure a 1D predictions array
     if len(X_test_scaled) < 1000:
-        predictions = variational_classifier(weights, bias, X_test_scaled)
+        predictions = np.array([variational_classifier(weights, bias, x) for x in X_test_scaled])
     else:
         preds_list = []
         for i in range(0, len(X_test_scaled), batch_size):
             X_b = X_test_scaled[i : i + batch_size]
-            preds_list.append(variational_classifier(weights, bias, X_b))
-        predictions = np.concatenate(preds_list)
+            preds_list.extend([variational_classifier(weights, bias, x) for x in X_b])
+        predictions = np.array(preds_list)
 
     predictions_signed = np.sign(predictions)
     acc = float(accuracy_score(Y_test, predictions_signed))
