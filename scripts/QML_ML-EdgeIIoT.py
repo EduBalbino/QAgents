@@ -3,7 +3,7 @@ from scripts.core.builders import Recipe, csv, select, device, encoder, ansatz, 
 if __name__ == "__main__":
     recipe = (
         Recipe()
-        | csv('data/ML-EdgeIIoT-dataset.csv', sample_size=500)
+        | csv('data/ML-EdgeIIoT-dataset.csv', sample_size=50000)
         | select([
             'icmp.checksum',
             'icmp.seq_le',
