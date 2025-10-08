@@ -73,6 +73,11 @@ def pca_to_pow2(max_qubits: Optional[int] = None) -> Step:
     return Step("dataset.pca_pow2", {"max_qubits": max_qubits})
 
 
+# Model persistence
+def save(path: str) -> Step:
+    return Step("model.save", {"path": path})
+
+
 # -----------------------------
 # Topology registries
 # -----------------------------
@@ -467,6 +472,30 @@ def run(recipe: Recipe) -> None:
     print("--------------------")
     print("Experiment complete.")
 
+    # Optional model save
+    save_cfg = cfg.get("model.save")
+    if save_cfg is not None:
+        save_path = save_cfg.get("path", os.path.join("models", f"{ds_name}_{ts}.pt"))
+        _save_model_torch(
+            path=save_path,
+            created_at=ts,
+            dataset=ds_name,
+            device_name=dev_name,
+            num_qubits=num_qubits,
+            encoder_name=enc_name,
+            encoder_opts={k: v for k, v in enc_cfg.items() if k != "name"},
+            ansatz_name=anz_name,
+            layers=num_layers,
+            measurement={"name": meas_name, "wires": meas_wires},
+            features=features,
+            label=label_col,
+            scaler=scaler,
+            weights=weights,
+            bias=bias,
+            train_cfg={"lr": lr, "batch": batch_size, "epochs": epochs},
+            metrics={"accuracy": acc, "precision": prec, "recall": rec, "f1": f1},
+        )
+
     # Return a structured summary for A/B aggregators
     return {
         "log_path": log_path,
@@ -479,5 +508,214 @@ def run(recipe: Recipe) -> None:
         "train": {"lr": lr, "batch": batch_size, "epochs": epochs},
         "metrics": {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1},
     }
+
+
+def _save_model_torch(
+    *,
+    path: str,
+    created_at: str,
+    dataset: str,
+    device_name: str,
+    num_qubits: int,
+    encoder_name: str,
+    encoder_opts: Dict[str, Any],
+    ansatz_name: str,
+    layers: int,
+    measurement: Dict[str, Any],
+    features: List[str],
+    label: str,
+    scaler: Any,
+    weights: Any,
+    bias: Any,
+    train_cfg: Dict[str, Any],
+    metrics: Dict[str, float],
+) -> None:
+    import os as _os
+    import torch as _torch
+    from pennylane import numpy as _np
+
+    _dir = _os.path.dirname(path)
+    if _dir:
+        _os.makedirs(_dir, exist_ok=True)
+
+    # Convert parameters to torch tensors (detach from autograd if present)
+    weights_np = _np.array(weights)
+    bias_np = _np.array(bias)
+    # Try to capture scaler state minimally to avoid unsafe pickle on load
+    scaler_state = None
+    try:
+        # Only keep attributes needed to reconstruct MinMaxScaler
+        from sklearn.preprocessing import MinMaxScaler as _SkMinMax
+        if isinstance(scaler, _SkMinMax):
+            scaler_state = {
+                "feature_range": getattr(scaler, "feature_range", (0, 1)),
+                "min_": getattr(scaler, "min_", None),
+                "scale_": getattr(scaler, "scale_", None),
+                "data_min_": getattr(scaler, "data_min_", None),
+                "data_max_": getattr(scaler, "data_max_", None),
+                "data_range_": getattr(scaler, "data_range_", None),
+                "n_samples_seen_": getattr(scaler, "n_samples_seen_", None),
+            }
+    except Exception:
+        pass
+
+    state = {
+        "version": 1,
+        "framework": "pennylane",
+        "created_at": created_at,
+        "dataset": dataset,
+        "device": device_name,
+        "num_qubits": int(num_qubits),
+        "encoder": encoder_name,
+        "encoder_opts": encoder_opts,
+        "ansatz": ansatz_name,
+        "layers": int(layers),
+        "measurement": measurement,
+        "features": list(features),
+        "label": label,
+        # Keep original for backward compat but also include a safe state
+        "scaler": scaler,
+        "scaler_state": scaler_state,
+        "weights": _torch.tensor(weights_np, dtype=_torch.float32),
+        "bias": _torch.tensor(bias_np, dtype=_torch.float32),
+        "train": train_cfg,
+        "metrics": metrics,
+    }
+    _torch.save(state, path)
+    print(f"Model saved to {path}")
+
+
+def load_model(path: str, device_override: Optional[str] = None):
+    import torch as _torch
+    import pennylane as qml
+    from pennylane import numpy as _np
+    import numpy as _npy
+    import pandas as _pd
+
+    # Allowlist sklearn MinMaxScaler for safe unpickling of legacy checkpoints
+    try:
+        from sklearn.preprocessing import MinMaxScaler as _SkMinMax
+        # Both public and private path (varies by sklearn versions)
+        import torch.serialization as _ts
+        _ts.add_safe_globals([_SkMinMax])
+        # Also attempt to allow the private module path string
+        try:
+            import sklearn.preprocessing._data as _sk_data
+            _ts.add_safe_globals([getattr(_sk_data, "MinMaxScaler", _SkMinMax)])
+        except Exception:
+            pass
+    except Exception:
+        _SkMinMax = None
+
+    # Explicitly set weights_only=False to support object unpickling from our trusted files
+    state = _torch.load(path, map_location="cpu", weights_only=False)
+
+    dev_name = device_override or state.get("device", "lightning.qubit")
+    num_qubits = int(state["num_qubits"]) if "num_qubits" in state else len(state.get("features", []))
+    dev = qml.device(dev_name, wires=num_qubits)
+
+    enc_name = state["encoder"]
+    anz_name = state["ansatz"]
+    if enc_name not in ENCODERS:
+        raise ValueError(f"Unknown encoder in saved model: {enc_name}")
+    if anz_name not in ANSAETZE:
+        raise ValueError(f"Unknown ansatz in saved model: {anz_name}")
+    encoder_fn = ENCODERS[enc_name]
+    ansatz_fn = ANSAETZE[anz_name]
+
+    wires = list(range(num_qubits))
+    enc_opts = state.get("encoder_opts", {})
+    meas_cfg = state.get("measurement", {"name": "z0", "wires": [0]})
+    meas_name = meas_cfg.get("name", "z0")
+    meas_wires = meas_cfg.get("wires", [0])
+
+    angle_scale = None
+    if enc_name.startswith("angle_embedding"):
+        if enc_opts.get("angle_range") == "0_pi":
+            angle_scale = qml.numpy.pi
+        elif enc_opts.get("angle_scale") is not None:
+            angle_scale = float(enc_opts.get("angle_scale"))
+
+    @qml.qnode(dev, interface="autograd")
+    def circuit(weights, x):
+        reupload = bool(enc_opts.get("reupload", False))
+        if reupload:
+            for W in weights:
+                encoder_fn(x, wires, hadamard=bool(enc_opts.get("hadamard", False)), angle_scale=angle_scale)
+                ansatz_fn(W, wires)
+        else:
+            encoder_fn(x, wires, hadamard=bool(enc_opts.get("hadamard", False)), angle_scale=angle_scale)
+            for W in weights:
+                ansatz_fn(W, wires)
+        if meas_name == "mean_z":
+            obs = [qml.expval(qml.PauliZ(w)) for w in meas_wires]
+            return obs
+        else:
+            return qml.expval(qml.PauliZ(0))
+
+    def variational_classifier(weights, bias, X_np):
+        res = circuit(weights, X_np)
+        try:
+            res = qml.numpy.mean(res)
+        except Exception:
+            pass
+        return res + bias
+
+    # Restore parameters and scaler
+    weights_t = state["weights"].detach().cpu().numpy()
+    bias_t = state["bias"].detach().cpu().numpy().item() if state["bias"].ndim == 0 else state["bias"].detach().cpu().numpy()
+    weights_np = _np.array(weights_t, requires_grad=False)
+    bias_np = _np.array(bias_t, requires_grad=False)
+    # Rebuild scaler either from embedded object or from safe state
+    scaler = state.get("scaler")
+    if scaler is None and state.get("scaler_state") is not None:
+        st = state["scaler_state"]
+        try:
+            if _SkMinMax is not None:
+                sc = _SkMinMax(feature_range=tuple(st.get("feature_range", (0, 1))))
+                # Assign learned attributes if present
+                for attr in ["min_", "scale_", "data_min_", "data_max_", "data_range_", "n_samples_seen_"]:
+                    val = st.get(attr)
+                    if val is not None:
+                        setattr(sc, attr, _np.array(val))
+                scaler = sc
+        except Exception:
+            scaler = None
+    features = state.get("features", [])
+
+    class LoadedQuantumClassifier:
+        def __init__(self):
+            self.features = features
+            self.scaler = scaler
+            self.weights = weights_np
+            self.bias = bias_np
+
+        def _to_numpy(self, X):
+            if isinstance(X, _pd.DataFrame):
+                if self.features:
+                    X = X[self.features]
+                X = X.values
+            elif isinstance(X, _pd.Series):
+                X = X.values.reshape(1, -1)
+            else:
+                X = _npy.asarray(X)
+            if self.scaler is not None:
+                X = self.scaler.transform(X)
+            return X
+
+        def decision_function(self, X):
+            Xn = self._to_numpy(X)
+            if len(Xn.shape) == 1:
+                return _np.array(variational_classifier(self.weights, self.bias, Xn))
+            preds_list = []
+            for i in range(len(Xn)):
+                preds_list.append(variational_classifier(self.weights, self.bias, Xn[i]))
+            return _np.array(preds_list)
+
+        def predict(self, X):
+            scores = self.decision_function(X)
+            return _npy.sign(_npy.asarray(scores))
+
+    return LoadedQuantumClassifier()
 
 
