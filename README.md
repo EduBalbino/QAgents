@@ -6,12 +6,12 @@ Uses all 61 raw features → quantile uniformization → supervised PLS → 8 co
 Recommended explore sweep (≈100k train / 20k test)
 
 ```bash
-EDGE_PHASE=explore EDGE_SWEEP_SAMPLE=120000 EDGE_TEST_SIZE=0.1666667 EDGE_STRATIFY=1 EDGE_EXPLORE_COUNT=8 EDGE_EXPAND_COUNT=0 PYTHONPATH=/home/pichau/QAgents uv run python /home/pichau/QAgents/scripts/QML_ML-EdgeIIoT-benchmark.py
+EDGE_PHASE=explore EDGE_SWEEP_SAMPLE=120000 EDGE_TEST_SIZE=0.1666667 EDGE_STRATIFY=1 EDGE_EXPLORE_COUNT=8 EDGE_EXPAND_COUNT=0 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark
 ```
 
 Other useful runs
-- Grid sanity check (defaults): `PYTHONPATH=/home/pichau/QAgents EDGE_MODE=grid uv run python /home/pichau/QAgents/scripts/QML_ML-EdgeIIoT-benchmark.py`
-- RF baseline (all features → PLS-8): `PYTHONPATH=/home/pichau/QAgents EDGE_MODE=rf EDGE_STRATIFY=1 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
+- Grid sanity check (defaults): `WANDB_DISABLED=1 EDGE_MODE=grid uv run python uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
+- RF baseline (all features → PLS-8): `WANDB_DISABLED=1 EDGE_MODE=rf EDGE_STRATIFY=1 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
 
 Key env overrides
 - Disable W&B: `WANDB_DISABLED=1` (skips login/init/logging for all runs)
@@ -28,6 +28,6 @@ Environment setup with uv
 - Activate: `source .venv/bin/activate`
 - Install deps: `uv pip install -r requirements.txt`
 - Run (examples):
-  - Explore sweep: `EDGE_PHASE=explore EDGE_SWEEP_SAMPLE=120000 EDGE_TEST_SIZE=0.1666667 EDGE_STRATIFY=1 EDGE_EXPLORE_COUNT=8 EDGE_EXPAND_COUNT=0 PYTHONPATH=/home/pichau/QAgents uv run python /home/pichau/QAgents/scripts/QML_ML-EdgeIIoT-benchmark.py`
-  - Grid: `PYTHONPATH=/home/pichau/QAgents EDGE_MODE=grid uv run python /home/pichau/QAgents/scripts/QML_ML-EdgeIIoT-benchmark.py`
-  - RF baseline: `PYTHONPATH=/home/pichau/QAgents EDGE_MODE=rf EDGE_STRATIFY=1 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
+  - Explore sweep: `WANDB_DISABLED=1 EDGE_PHASE=explore EDGE_SWEEP_SAMPLE=120000 EDGE_TEST_SIZE=0.1666667 EDGE_STRATIFY=1 EDGE_EXPLORE_COUNT=8 EDGE_EXPAND_COUNT=0 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
+  - Grid: `WANDB_DISABLED=1 EDGE_MODE=grid uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
+  - RF baseline: `WANDB_DISABLED=1 EDGE_MODE=rf EDGE_STRATIFY=1 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`

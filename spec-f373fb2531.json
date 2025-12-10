@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "encoder": {
+    "name": "angle_embedding_y",
+    "hadamard": true,
+    "reupload": true,
+    "angle_range": "0_pi",
+    "angle_scale": null
+  },
+  "ansatz": {
+    "name": "strongly_entangling",
+    "layers": 4
+  },
+  "measurement": {
+    "name": "mean_z",
+    "wires": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "data": {
+    "path": "data/ML-EdgeIIoT-dataset-binario.csv",
+    "features": [
+      "ip.src_host",
+      "ip.dst_host",
+      "arp.dst.proto_ipv4",
+      "arp.opcode",
+      "arp.hw.size",
+      "arp.src.proto_ipv4",
+      "icmp.checksum",
+      "icmp.seq_le"
+    ],
+    "sample": 120000
+  },
+  "train": {
+    "lr": 0.1,
+    "batch": 256,
+    "epochs": 3,
+    "seed": 42,
+    "class_weights": "balanced"
+  },
+  "meta": {
+    "device": "lightning.qubit",
+    "env": {
+      "WANDB_PROJECT": "qml-edgeiiot",
+      "WANDB_ENTITY": "edubalbino"
+    }
+  },
+  "provenance": {
+    "data": {
+      "path": "data/ML-EdgeIIoT-dataset-binario.csv",
+      "exists": true,
+      "sample": 120000,
+      "features": [
+        "ip.src_host",
+        "ip.dst_host",
+        "arp.dst.proto_ipv4",
+        "arp.opcode",
+        "arp.hw.size",
+        "arp.src.proto_ipv4",
+        "icmp.checksum",
+        "icmp.seq_le"
+      ],
+      "md5": "98d3acb043cd6b12050abdd085c464cd",
+      "size_bytes": 82184390
+    },
+    "code": {
+      "git_commit": "91168ec141ba3a857f69941fbbd5f9e46dddfc23",
+      "git_dirty": true
+    },
+    "env": {
+      "python": "3.13.7",
+      "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35"
+    }
+  }
+}

@@ -562,12 +562,14 @@ def main() -> None:
     aggregate_tags = ["aggregate", "edgeiiot"]
     aggregate_kwargs = _wandb_base_kwargs(aggregate_name, job_type="benchmark-aggregate", tags=aggregate_tags)
     aggregate_run = None
-    try:
-        _wandb_ensure_login()
-        aggregate_run = wandb.init(**aggregate_kwargs)
-    except Exception as exc:
-        print(f"Failed to initialize W&B aggregate run '{aggregate_name}': {exc}")
-    table = wandb.Table(columns=run_headers) if aggregate_run is not None else None
+    table = None
+    if not _wandb_disabled():
+        try:
+            _wandb_ensure_login()
+            aggregate_run = wandb.init(**aggregate_kwargs)
+            table = wandb.Table(columns=run_headers)
+        except Exception as exc:
+            print(f"Failed to initialize W&B aggregate run '{aggregate_name}': {exc}")
 
     if aggregate_run is not None:
         aggregate_run.config.update({
@@ -742,6 +744,9 @@ def _build_sweep_config(phase: str) -> Dict[str, Any]:
 
 
 def _sweep_train() -> None:
+    if _wandb_disabled():
+        print("[ERROR] Sweep mode requires W&B. Unset WANDB_DISABLED or use EDGE_MODE=grid.")
+        return
     cfg_kwargs = _wandb_base_kwargs(name=None, job_type="sweep-run")
     # Add phase tag if present in config later
     run = wandb.init(**cfg_kwargs)
@@ -788,13 +793,14 @@ def _sweep_train() -> None:
 
 
 def _run_sweeps_autorun() -> None:
+    if _wandb_disabled():
+        print("[INFO] W&B disabled; sweeps require W&B. Use EDGE_MODE=grid instead.")
+        return
     explore_count = _env_int("EDGE_EXPLORE_COUNT", EXPLORE_COUNT_DEFAULT)
     expand_count = _env_int("EDGE_EXPAND_COUNT", EXPAND_COUNT_DEFAULT)
     project = _wandb_project()
     entity = _wandb_entity()
     try:
-        if _wandb_disabled():
-            return
         _wandb_ensure_login()
     except Exception as exc:
         print(f"Cannot login to W&B: {exc}")
@@ -849,7 +855,7 @@ def run_rf_baseline(sample: int = 60000, seed: int = 42, n_estimators: int = 200
     return summary
 
 if __name__ == "__main__":
-    # Default: run both sweeps (explore -> expand). Set EDGE_MODE=grid to run grid instead.
+    # Default: run sweeps if W&B enabled, else grid. Set EDGE_MODE to override.
     mode = os.environ.get("EDGE_MODE", "").lower()
     if len(sys.argv) > 1 and sys.argv[1] == "--sweep":
         _sweep_train()
@@ -864,5 +870,8 @@ if __name__ == "__main__":
             stratify=os.environ.get("EDGE_STRATIFY", "1") not in ("0", "false", "False"),
             test_size=float(os.environ.get("EDGE_TEST_SIZE", "0.2")),
         )
+    elif _wandb_disabled():
+        # Sweeps require W&B; fall back to grid
+        main()
     else:
         _run_sweeps_autorun()
