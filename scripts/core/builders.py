@@ -271,6 +271,7 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     import pandas as pd
     import pennylane as qml
     from pennylane import numpy as np
+    import numpy as _np
     from pennylane.optimize import AdamOptimizer
     from sklearn.model_selection import train_test_split
     from sklearn.decomposition import PCA
@@ -398,13 +399,23 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     # Coercion fit on train, apply to test
     X_train, X_test = _coerce_fit_apply(X_train, X_test)
 
+    # Track preprocessing pipeline components for persistence
+    qt = None
+    pls = None
+    pca = None
+
     # Optional quantile uniformization (fit on train only)
     q_cfg = cfg.get("dataset.quantile_uniform", None)
     if q_cfg is not None:
         from sklearn.preprocessing import QuantileTransformer
         n_q = int(q_cfg.get("n_quantiles", min(1000, len(X_train))))
         out_dist = q_cfg.get("output_distribution", "uniform")
-        qt = QuantileTransformer(n_quantiles=n_q, output_distribution=out_dist, subsample=int(1e9), random_state=42)
+        qt = QuantileTransformer(
+            n_quantiles=n_q,
+            output_distribution=out_dist,
+            subsample=int(1e9),
+            random_state=42,
+        )
         X_train = qt.fit_transform(X_train)
         X_test = qt.transform(X_test)
 
@@ -654,50 +665,28 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         )
     )
 
-    # QNode
-    @qml.qnode(dev, interface="autograd")
-    def circuit(weights, x):
+    # QNode (built as a base QNode, then wrapped with batch_input)
+    def _circuit(weights, x):
         # Optionally apply encoder before each layer (re-upload)
         reupload = bool(enc_cfg.get("reupload", False))
         if reupload:
-            for W in weights:
+            def _reupload_layer(W):
                 encoder_fn(x, wires, hadamard=bool(enc_cfg.get("hadamard", False)), angle_scale=angle_scale)
                 ansatz_fn(W, wires)
+            qml.layer(_reupload_layer, num_layers, weights)
         else:
             encoder_fn(x, wires, hadamard=bool(enc_cfg.get("hadamard", False)), angle_scale=angle_scale)
-            for W in weights:
-                ansatz_fn(W, wires)
+            qml.layer(ansatz_fn, num_layers, weights, wires=wires)
 
         # Measurement
         if meas_name == "mean_z":
-            obs = [qml.expval(qml.PauliZ(w)) for w in meas_wires]
-            return qml.numpy.stack(obs)
+            if not meas_wires:
+                raise ValueError("mean_z measurement requires at least one wire")
+            coeffs = [1.0 / len(meas_wires)] * len(meas_wires)
+            ops = [qml.PauliZ(w) for w in meas_wires]
+            return qml.expval(qml.Hamiltonian(coeffs, ops))
         else:  # default z0
             return qml.expval(qml.PauliZ(0))
-
-    def variational_classifier(weights, bias, X_np):
-        res = circuit(weights, X_np)
-        # If multiple expvals were returned, average them robustly
-        try:
-            res = qml.numpy.mean(res)
-        except Exception:
-            try:
-                import pennylane as qml
-                res = qml.numpy.mean(qml.numpy.stack(res))
-            except Exception:
-                # As a last resort, convert to numpy array
-                import numpy as _np
-                res = _np.mean(_np.asarray(res, dtype=_np.float64))
-        return res + bias
-
-    def _predict_logits(weights, bias, X_input):
-        # Ensure per-sample predictions for 2D inputs
-        try:
-            if hasattr(X_input, "shape") and len(X_input.shape) >= 2:
-                return np.array([variational_classifier(weights, bias, x) for x in X_input])
-        except Exception:
-            pass
-        return variational_classifier(weights, bias, X_input)
 
     def square_loss(labels, predictions, class_weights=None):
         loss = (labels - predictions) ** 2
@@ -767,6 +756,7 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     # Training setup
     seed = int(tr_cfg.get("seed", 42))
     np.random.seed(seed)
+    _np.random.seed(seed)
     try:
         import random as _py_random
         _py_random.seed(seed)
@@ -781,6 +771,28 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         pass
     weights_init = 0.01 * np.random.randn(num_layers, num_qubits, 3, requires_grad=True)
     bias_init = np.array(0.0, requires_grad=True)
+    alpha_init = np.array(1.0, requires_grad=True)
+
+    def _build_batched_qnode(sample_x):
+        base_qnode = qml.QNode(_circuit, dev, interface="autograd", diff_method="adjoint", cache=True)
+        tape = base_qnode.construct([weights_init, sample_x], {})
+        all_params = tape.get_parameters(trainable_only=False)
+        trainable = set(tape.trainable_params)
+        argnum = [i for i in range(len(all_params)) if i not in trainable]
+        if not argnum:
+            return base_qnode
+        return qml.batch_input(base_qnode, argnum=argnum)
+
+    sample_x = _np.asarray(X_train_scaled[0], dtype=_np.float64)
+    circuit = _build_batched_qnode(sample_x)
+
+    def variational_classifier(weights, bias, alpha, X_np):
+        X_np = _np.asarray(X_np, dtype=_np.float64)
+        res = circuit(weights, X_np)
+        return alpha * res + bias
+
+    def _predict_logits(weights, bias, alpha, X_input):
+        return variational_classifier(weights, bias, alpha, X_input)
 
     lr = float(tr_cfg.get("lr", 0.1))
     # Always use a fixed mini-batch size of 256 for training (clipped by dataset size)
@@ -813,8 +825,8 @@ def run(recipe: Recipe) -> Dict[str, Any]:
             term = sample_weights * term
         return np.mean(term)
 
-    def cost(weights, bias, X_np, Y_np):
-        preds = _predict_logits(weights, bias, X_np)
+    def cost(weights, bias, alpha, X_np, Y_np):
+        preds = _predict_logits(weights, bias, alpha, X_np)
         # Use logistic loss for classification
         y01 = (Y_np > 0).astype(int)
         wts = None
@@ -825,22 +837,34 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     # Training loop (epochs)
     weights = weights_init
     bias = bias_init
+    alpha = alpha_init
     start_time = time.time()
     total_iters = 0
     _early_stop = False
     for ep in range(epochs):
         num_it = max(1, len(X_train_scaled) // batch_size)
+        print(f"Epoch {ep+1}/{epochs} | iters={num_it} | batch_size={batch_size}", flush=True)
         for it in range(num_it):
-            batch_index = np.random.randint(0, len(X_train_scaled), (batch_size,))
+            batch_index = _np.random.randint(0, len(X_train_scaled), (batch_size,))
             X_batch = X_train_scaled[batch_index]
             Y_batch = Y_train[batch_index]
-            weights, bias = opt.step(lambda w, b: cost(w, b, X_batch, Y_batch), weights, bias)
+            print(f"Epoch {ep+1} Iter {it+1}/{num_it} start", flush=True)
+            iter_start = time.time()
+            weights, bias, alpha = opt.step(
+                lambda w, b, a: cost(w, b, a, X_batch, Y_batch), weights, bias, alpha
+            )
+            iter_s = time.time() - iter_start
             total_iters += 1
             if (it + 1) % 10 == 0 or (it + 1) == num_it:
-                preds_b = _predict_logits(weights, bias, X_batch)
-                c_b = cost(weights, bias, X_batch, Y_batch)
+                preds_b = _predict_logits(weights, bias, alpha, X_batch)
+                c_b = cost(weights, bias, alpha, X_batch, Y_batch)
                 a_b = accuracy(Y_batch, preds_b)
-                print(f"Epoch {ep+1} Iter {it+1}/{num_it} | Batch Loss: {c_b:0.7f} | Batch Acc: {a_b:0.7f}")
+                print(
+                    f"Epoch {ep+1} Iter {it+1}/{num_it} | "
+                    f"Batch Loss: {c_b:0.7f} | Batch Acc: {a_b:0.7f} | "
+                    f"Iter Time: {iter_s:.2f}s",
+                    flush=True,
+                )
                 # Optionally evaluate on a held-out subset of the test set to track
                 # how metrics evolve over wall-clock time. This is intentionally
                 # approximate (subset, fixed threshold) but gives a useful trend.
@@ -848,11 +872,11 @@ def run(recipe: Recipe) -> Dict[str, Any]:
                 if _wandb_can_log:
                     try:
                         eval_size = min(1000, len(X_test_scaled))
-                        eval_idx = np.random.randint(0, len(X_test_scaled), eval_size)
+                        eval_idx = _np.random.randint(0, len(X_test_scaled), eval_size)
                         X_eval = X_test_scaled[eval_idx]
                         Y_eval = Y_test[eval_idx]
                         Y_eval01 = Y_test01[eval_idx]
-                        logits_eval = _predict_logits(weights, bias, X_eval)
+                        logits_eval = _predict_logits(weights, bias, alpha, X_eval)
                         preds_eval = np.where(logits_eval >= 0.0, 1, -1)
                         acc_eval = float(accuracy_score(Y_eval, preds_eval))
                         prec_eval = float(precision_score(Y_eval, preds_eval, average="macro", zero_division=0))
@@ -901,6 +925,12 @@ def run(recipe: Recipe) -> Dict[str, Any]:
                     print("Early exit: non-finite batch loss detected; stopping training early.")
                     _early_stop = True
                     break
+            elif (it + 1) % 2 == 0:
+                # Heartbeat to show forward/backward is still running
+                print(
+                    f"Epoch {ep+1} Iter {it+1}/{num_it} | Iter Time: {iter_s:.2f}s",
+                    flush=True,
+                )
         if _early_stop:
             break
 
@@ -908,10 +938,10 @@ def run(recipe: Recipe) -> Dict[str, Any]:
 
     # Validation quick check (use a small random subset if large)
     val_size = min(5 * batch_size, len(X_train_scaled))
-    val_idx = np.random.randint(0, len(X_train_scaled), val_size)
+    val_idx = _np.random.randint(0, len(X_train_scaled), val_size)
     X_val = X_train_scaled[val_idx]
     Y_val = Y_train[val_idx]
-    preds_val = _predict_logits(weights, bias, X_val)
+    preds_val = _predict_logits(weights, bias, alpha, X_val)
     # Choose threshold to maximize balanced accuracy on validation.
     # Guard against degenerate validation slices that contain only a single class,
     # which would otherwise trigger sklearn's
@@ -948,16 +978,8 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         best_t = 0.0
         best_bacc = float("nan")
 
-    # Test evaluation
-    # Compute predictions per-sample to ensure a 1D predictions array
-    if len(X_test_scaled) < 1000:
-        predictions = np.array([variational_classifier(weights, bias, x) for x in X_test_scaled])
-    else:
-        preds_list = []
-        for i in range(0, len(X_test_scaled), batch_size):
-            X_b = X_test_scaled[i : i + batch_size]
-            preds_list.extend([variational_classifier(weights, bias, x) for x in X_b])
-        predictions = np.array(preds_list)
+    # Test evaluation (batched)
+    predictions = np.array(_predict_logits(weights, bias, alpha, X_test_scaled))
 
     # Threshold from validation to maximize balanced accuracy
     predictions_signed = np.where(predictions >= best_t, 1, -1)
@@ -1010,8 +1032,12 @@ def run(recipe: Recipe) -> Dict[str, Any]:
             features=features,
             label=label_col,
             scaler=scaler,
+            quantile=qt,
+            pls=pls,
+            pca=pca,
             weights=weights,
             bias=bias,
+            alpha=alpha,
             train_cfg={"lr": lr, "batch": batch_size, "epochs": epochs},
             metrics={"accuracy": acc, "precision": prec, "recall": rec, "f1": f1, "balanced_accuracy": bacc, "auc": auc, "val_balanced_accuracy": best_bacc, "threshold": best_t},
         )
@@ -1045,8 +1071,12 @@ def _save_model_torch(
     features: List[str],
     label: str,
     scaler: Any,
+    quantile: Any,
+    pls: Any,
+    pca: Any,
     weights: Any,
     bias: Any,
+    alpha: Any,
     train_cfg: Dict[str, Any],
     metrics: Dict[str, float],
 ) -> None:
@@ -1061,7 +1091,8 @@ def _save_model_torch(
     # Convert parameters to torch tensors (detach from autograd if present)
     weights_np = _np.array(weights)
     bias_np = _np.array(bias)
-    # Try to capture scaler state minimally to avoid unsafe pickle on load
+    alpha_np = _np.array(alpha)
+    # Try to capture scaler/preprocessing state minimally to avoid unsafe pickle on load
     scaler_state = None
     try:
         # Only keep attributes needed to reconstruct MinMaxScaler
@@ -1078,9 +1109,51 @@ def _save_model_torch(
             }
     except Exception:
         pass
+    quantile_state = None
+    pls_state = None
+    pca_state = None
+    try:
+        from sklearn.preprocessing import QuantileTransformer as _SkQuantile
+        if isinstance(quantile, _SkQuantile):
+            quantile_state = {
+                "n_quantiles": getattr(quantile, "n_quantiles", None),
+                "subsample": getattr(quantile, "subsample", None),
+                "output_distribution": getattr(quantile, "output_distribution", None),
+                "random_state": getattr(quantile, "random_state", None),
+                "n_quantiles_": getattr(quantile, "n_quantiles_", None),
+                "quantiles_": getattr(quantile, "quantiles_", None),
+                "references_": getattr(quantile, "references_", None),
+                "n_features_in_": getattr(quantile, "n_features_in_", None),
+            }
+    except Exception:
+        pass
+    try:
+        from sklearn.cross_decomposition import PLSRegression as _SkPLS
+        if isinstance(pls, _SkPLS):
+            pls_state = {
+                "n_components": getattr(pls, "n_components", None),
+                "x_mean_": getattr(pls, "x_mean_", None),
+                "x_std_": getattr(pls, "x_std_", None),
+                "x_weights_": getattr(pls, "x_weights_", None),
+                "x_rotations_": getattr(pls, "x_rotations_", None),
+                "n_features_in_": getattr(pls, "n_features_in_", None),
+            }
+    except Exception:
+        pass
+    try:
+        from sklearn.decomposition import PCA as _SkPCA
+        if isinstance(pca, _SkPCA):
+            pca_state = {
+                "n_components": getattr(pca, "n_components", None),
+                "components_": getattr(pca, "components_", None),
+                "mean_": getattr(pca, "mean_", None),
+                "n_features_in_": getattr(pca, "n_features_in_", None),
+            }
+    except Exception:
+        pass
 
     state = {
-        "version": 1,
+        "version": 2,
         "framework": "pennylane",
         "created_at": created_at,
         "dataset": dataset,
@@ -1096,8 +1169,15 @@ def _save_model_torch(
         # Keep original for backward compat but also include a safe state
         "scaler": scaler,
         "scaler_state": scaler_state,
+        "quantile": quantile,
+        "quantile_state": quantile_state,
+        "pls": pls,
+        "pls_state": pls_state,
+        "pca": pca,
+        "pca_state": pca_state,
         "weights": _torch.tensor(weights_np, dtype=_torch.float32),
         "bias": _torch.tensor(bias_np, dtype=_torch.float32),
+        "alpha": _torch.tensor(alpha_np, dtype=_torch.float32),
         "train": train_cfg,
         "metrics": metrics,
     }
@@ -1116,20 +1196,41 @@ def load_model(path: str, device_override: Optional[str] = None):
     import numpy as _npy
     import pandas as _pd
 
-    # Allowlist sklearn MinMaxScaler for safe unpickling of legacy checkpoints
+    # Allowlist sklearn components for safe unpickling of legacy checkpoints
     try:
         from sklearn.preprocessing import MinMaxScaler as _SkMinMax
+        from sklearn.preprocessing import QuantileTransformer as _SkQuantile
+        from sklearn.cross_decomposition import PLSRegression as _SkPLS
+        from sklearn.decomposition import PCA as _SkPCA
         # Both public and private path (varies by sklearn versions)
         import torch.serialization as _ts
-        _ts.add_safe_globals([_SkMinMax])
+        _ts.add_safe_globals([_SkMinMax, _SkQuantile, _SkPLS, _SkPCA])
         # Also attempt to allow the private module path string
         try:
             import sklearn.preprocessing._data as _sk_data
             _ts.add_safe_globals([getattr(_sk_data, "MinMaxScaler", _SkMinMax)])
         except Exception:
             pass
+        try:
+            import sklearn.preprocessing._data as _sk_qt
+            _ts.add_safe_globals([getattr(_sk_qt, "QuantileTransformer", _SkQuantile)])
+        except Exception:
+            pass
+        try:
+            import sklearn.cross_decomposition._pls as _sk_pls
+            _ts.add_safe_globals([getattr(_sk_pls, "PLSRegression", _SkPLS)])
+        except Exception:
+            pass
+        try:
+            import sklearn.decomposition._pca as _sk_pca
+            _ts.add_safe_globals([getattr(_sk_pca, "PCA", _SkPCA)])
+        except Exception:
+            pass
     except Exception:
         _SkMinMax = None
+        _SkQuantile = None
+        _SkPLS = None
+        _SkPCA = None
 
     # Explicitly set weights_only=False to support object unpickling from our trusted files
     state = _torch.load(path, map_location="cpu", weights_only=False)
@@ -1140,6 +1241,7 @@ def load_model(path: str, device_override: Optional[str] = None):
 
     enc_name = state["encoder"]
     anz_name = state["ansatz"]
+    num_layers = int(state.get("layers", len(state.get("weights", []))))
     if enc_name not in ENCODERS:
         raise ValueError(f"Unknown encoder in saved model: {enc_name}")
     if anz_name not in ANSAETZE:
@@ -1160,37 +1262,37 @@ def load_model(path: str, device_override: Optional[str] = None):
         elif enc_opts.get("angle_scale") is not None:
             angle_scale = float(enc_opts.get("angle_scale"))
 
-    @qml.qnode(dev, interface="autograd")
-    def circuit(weights, x):
+    def _circuit(weights, x):
         reupload = bool(enc_opts.get("reupload", False))
         if reupload:
-            for W in weights:
+            def _reupload_layer(W):
                 encoder_fn(x, wires, hadamard=bool(enc_opts.get("hadamard", False)), angle_scale=angle_scale)
                 ansatz_fn(W, wires)
+            qml.layer(_reupload_layer, num_layers, weights)
         else:
             encoder_fn(x, wires, hadamard=bool(enc_opts.get("hadamard", False)), angle_scale=angle_scale)
-            for W in weights:
-                ansatz_fn(W, wires)
+            qml.layer(ansatz_fn, num_layers, weights, wires=wires)
         if meas_name == "mean_z":
-            obs = [qml.expval(qml.PauliZ(w)) for w in meas_wires]
-            return obs
+            if not meas_wires:
+                raise ValueError("mean_z measurement requires at least one wire")
+            coeffs = [1.0 / len(meas_wires)] * len(meas_wires)
+            ops = [qml.PauliZ(w) for w in meas_wires]
+            return qml.expval(qml.Hamiltonian(coeffs, ops))
         else:
             return qml.expval(qml.PauliZ(0))
-
-    def variational_classifier(weights, bias, X_np):
-        res = circuit(weights, X_np)
-        try:
-            res = qml.numpy.mean(res)
-        except Exception:
-            pass
-        return res + bias
 
     # Restore parameters and scaler
     weights_t = state["weights"].detach().cpu().numpy()
     bias_t = state["bias"].detach().cpu().numpy().item() if state["bias"].ndim == 0 else state["bias"].detach().cpu().numpy()
+    alpha_t = state.get("alpha")
+    if alpha_t is None:
+        alpha_t = _np.array(1.0)
+    else:
+        alpha_t = alpha_t.detach().cpu().numpy().item() if alpha_t.ndim == 0 else alpha_t.detach().cpu().numpy()
     weights_np = _np.array(weights_t, requires_grad=False)
     bias_np = _np.array(bias_t, requires_grad=False)
-    # Rebuild scaler either from embedded object or from safe state
+    alpha_np = _np.array(alpha_t, requires_grad=False)
+    # Rebuild preprocessing either from embedded object or from safe state
     scaler = state.get("scaler")
     if scaler is None and state.get("scaler_state") is not None:
         st = state["scaler_state"]
@@ -1205,14 +1307,63 @@ def load_model(path: str, device_override: Optional[str] = None):
                 scaler = sc
         except Exception:
             scaler = None
+    quantile = state.get("quantile")
+    if quantile is None and state.get("quantile_state") is not None:
+        st = state["quantile_state"]
+        try:
+            if _SkQuantile is not None:
+                qt = _SkQuantile(
+                    n_quantiles=int(st.get("n_quantiles") or 1000),
+                    output_distribution=st.get("output_distribution") or "uniform",
+                    subsample=int(st.get("subsample") or 1e9),
+                    random_state=st.get("random_state", None),
+                )
+                for attr in ["n_quantiles_", "quantiles_", "references_", "n_features_in_"]:
+                    val = st.get(attr)
+                    if val is not None:
+                        setattr(qt, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+                quantile = qt
+        except Exception:
+            quantile = None
+    pls = state.get("pls")
+    if pls is None and state.get("pls_state") is not None:
+        st = state["pls_state"]
+        try:
+            if _SkPLS is not None:
+                pls_r = _SkPLS(n_components=int(st.get("n_components") or 2))
+                for attr in ["x_mean_", "x_std_", "x_weights_", "x_rotations_", "n_features_in_"]:
+                    val = st.get(attr)
+                    if val is not None:
+                        setattr(pls_r, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+                pls = pls_r
+        except Exception:
+            pls = None
+    pca = state.get("pca")
+    if pca is None and state.get("pca_state") is not None:
+        st = state["pca_state"]
+        try:
+            if _SkPCA is not None:
+                pca_r = _SkPCA(n_components=int(st.get("n_components") or 2))
+                for attr in ["components_", "mean_", "n_features_in_"]:
+                    val = st.get(attr)
+                    if val is not None:
+                        setattr(pca_r, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+                pca = pca_r
+        except Exception:
+            pca = None
     features = state.get("features", [])
 
     class LoadedQuantumClassifier:
         def __init__(self):
             self.features = features
             self.scaler = scaler
+            self.quantile = quantile
+            self.pls = pls
+            self.pca = pca
             self.weights = weights_np
             self.bias = bias_np
+            self.alpha = alpha_np
+            self._circuit = None
 
         def _to_numpy(self, X):
             if isinstance(X, _pd.DataFrame):
@@ -1223,18 +1374,41 @@ def load_model(path: str, device_override: Optional[str] = None):
                 X = X.values.reshape(1, -1)
             else:
                 X = _npy.asarray(X)
+            if self.quantile is not None:
+                X = self.quantile.transform(X)
+            if self.pls is not None:
+                X = self.pls.transform(X)
+            if self.pca is not None:
+                X = self.pca.transform(X)
             if self.scaler is not None:
                 X = self.scaler.transform(X)
             return X
 
+        def _get_circuit(self, Xn):
+            if self._circuit is not None:
+                return self._circuit
+            sample_x = Xn[0] if len(Xn.shape) > 1 else Xn
+            sample_x = _npy.asarray(sample_x, dtype=_npy.float64)
+            base_qnode = qml.QNode(_circuit, dev, interface="autograd", diff_method="adjoint", cache=True)
+            tape = base_qnode.construct([self.weights, sample_x], {})
+            all_params = tape.get_parameters(trainable_only=False)
+            trainable = set(tape.trainable_params)
+            argnum = [i for i in range(len(all_params)) if i not in trainable]
+            if argnum:
+                self._circuit = qml.batch_input(base_qnode, argnum=argnum)
+            else:
+                self._circuit = base_qnode
+            return self._circuit
+
+        def _variational_classifier(self, X_np):
+            X_np = _npy.asarray(X_np, dtype=_npy.float64)
+            circuit = self._get_circuit(X_np)
+            res = circuit(self.weights, X_np)
+            return self.alpha * res + self.bias
+
         def decision_function(self, X):
             Xn = self._to_numpy(X)
-            if len(Xn.shape) == 1:
-                return _np.array(variational_classifier(self.weights, self.bias, Xn))
-            preds_list = []
-            for i in range(len(Xn)):
-                preds_list.append(variational_classifier(self.weights, self.bias, Xn[i]))
-            return _np.array(preds_list)
+            return _np.array(self._variational_classifier(Xn))
 
         def predict(self, X):
             scores = self.decision_function(X)

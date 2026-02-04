@@ -5,23 +5,20 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "pennylane-lightning[gpu]==0.41.1",
-    "pennylane==0.41.1",
+    "pennylane-lightning[gpu]==0.44.0",
+    "pennylane==0.44.0",
+    "pennylane-catalyst>=0.9.0",
+    "jax[cuda12]>=0.4.30",
+    "optax>=0.2.6",
+    "chex>=0.1.91",
     "colorama==0.4.6",
-    "ipykernel==6.29.5",
-    "langchain-anthropic==0.3.15",
-    "langchain-community==0.3.26",
-    "langchain-ollama==0.3.3",
-    "langgraph==0.4.10",
-    "matplotlib==3.10.3",
-    "pandas==2.3.0",
-    "scikit-learn==1.7.0",
-    "ruff>=0.12.11",
-    "torch>=2.8.0",
-    "plotly>=6.3.1",
-    "wandb>=0.22.3",
+    "ipykernel==7.1.0",
+    "matplotlib==3.10.8",
+    "pandas==3.0.0",
+    "scikit-learn==1.8.0",
+    "ruff>=0.14.14",
+    "torch>=2.10.0",
+    "plotly>=6.5.2",
+    "wandb>=0.24.0",
     "catkin-pkg>=1.1.0",
 ]
-
-[uv.source]
-src = { path = "src" }

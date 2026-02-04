@@ -1,0 +1,79 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "input": {
+    "maxFileSize": 52428800
+  },
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "parsableStyle": false,
+    "fileSummary": true,
+    "directoryStructure": true,
+    "files": true,
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "compress": false,
+    "topFilesLength": 5,
+    "showLineNumbers": false,
+    "truncateBase64": false,
+    "copyToClipboard": false,
+    "includeFullDirectoryStructure": false,
+    "tokenCountTree": false,
+    "git": {
+      "sortByChanges": true,
+      "sortByChangesMaxCommits": 100,
+      "includeDiffs": false,
+      "includeLogs": false,
+      "includeLogsCount": 50
+    }
+  },
+  "include": [
+    "scripts/__init__.py",
+    "scripts/config.py",
+    "scripts/specs.py",
+    "scripts/core/__init__.py",
+    "scripts/core/builders.py",
+    "scripts/core/jax_preprocess.py",
+    "scripts/core/jax_train.py",
+    "scripts/train_edge_pls8_binary.py",
+    "scripts/QML_ML-EdgeIIoT-Binario.py",
+    "scripts/QML_ML-EdgeIIoT-benchmark.py",
+    "scripts/predict.py",
+    "scripts/eval_models_edge_pls8.py",
+    "scripts/export_pls_full.py",
+    "scripts/inspect_data.py",
+    "scripts/merge_datasets.py",
+    "scripts/debug_imports.py"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDotIgnore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "wandb/**/*",
+      "data/**/*",
+      "logs/**/*",
+      "models/**/*",
+      ".venv/**/*",
+      ".history/**/*",
+      "__pycache__/**/*",
+      "*.pyc",
+      "*.pyo",
+      ".git/**/*",
+      "uv.lock",
+      ".cursorignore",
+      "spec-*.json",
+      "test*",
+      "pyproject.toml",
+      "requirements.txt",
+      "README.md",
+      "repomix.config.json"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  },
+  "tokenCount": {
+    "encoding": "o200k_base"
+  }
+}
