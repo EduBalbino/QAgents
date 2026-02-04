@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
         help="Also output continuous decision scores (margin)",
     )
     p.add_argument(
+        "--no-preprocess",
+        action="store_true",
+        help="Disable quantile/PLS/PCA preprocessing from the saved model",
+    )
+    p.add_argument(
         "--limit",
         type=int,
         default=500,
@@ -60,6 +65,10 @@ def parse_points(points_args: List[str]) -> np.ndarray:
 def main() -> None:
     args = parse_args()
     clf = load_model(args.model)
+    if args.no_preprocess:
+        clf.quantile = None
+        clf.pls = None
+        clf.pca = None
 
     if args.csv:
         df = pd.read_csv(args.csv)
