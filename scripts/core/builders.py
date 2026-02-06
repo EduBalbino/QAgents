@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Dedup guards for log lines within a single process run
 _PRINTED_SAVED_PATHS: set = set()
+_BATCH_INDEX_CACHE: dict = {}
 
 
 # -----------------------------
@@ -206,24 +207,23 @@ def _ansatz_ring_rot_cnot(W: Any, wires: List[int]) -> None:
     import pennylane as qml
 
     num_qubits = len(wires)
-    for i in range(num_qubits):
-        qml.Rot(W[i, 0], W[i, 1], W[i, 2], wires=wires[i])
-    for i in range(num_qubits - 1):
-        qml.CNOT(wires=[wires[i], wires[i + 1]])
-    qml.CNOT(wires=[wires[-1], wires[0]])
+    try:
+        ndim = int(getattr(W, "ndim", 0))
+    except Exception:
+        ndim = 0
+    layers = [W] if ndim == 2 else W
+    for layer in layers:
+        for i in range(num_qubits):
+            qml.Rot(layer[i, 0], layer[i, 1], layer[i, 2], wires=wires[i])
+        for i in range(num_qubits - 1):
+            qml.CNOT(wires=[wires[i], wires[i + 1]])
+        qml.CNOT(wires=[wires[-1], wires[0]])
 
 
 @register_ansatz("strongly_entangling")
-def _ansatz_sel(W: Any, wires: List[int]) -> None:
+def _ansatz_sel(weights: Any, wires: List[int]) -> None:
     import pennylane as qml
-    # StronglyEntanglingLayers expects shape (layers, n_wires, 3).
-    # Our circuit calls ansatz per-layer with W shaped (n_wires, 3), so expand dims.
-    try:
-        W3 = qml.numpy.expand_dims(W, axis=0)
-    except Exception:
-        # Fallback: if already correct shape, use as-is
-        W3 = W
-    qml.templates.StronglyEntanglingLayers(W3, wires=wires)
+    qml.StronglyEntanglingLayers(weights, wires=wires)
 
 
 # -----------------------------
@@ -265,19 +265,22 @@ def _setup_logger(log_filename: str, tee_to_terminal: bool = True):
 def run(recipe: Recipe) -> Dict[str, Any]:
     import os
     import datetime
+    import math
     import time
 
     # Lazy imports for heavy deps
     import pandas as pd
     import pennylane as qml
-    from pennylane import numpy as np
-    import numpy as _np
-    from pennylane.optimize import AdamOptimizer
+    import numpy as np
+    import jax
+    import jax.numpy as jnp
     from sklearn.model_selection import train_test_split
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import MinMaxScaler
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, balanced_accuracy_score, roc_auc_score
     from sklearn.utils.class_weight import compute_class_weight
+    from scripts.core.compiled_core import Backend, get_compiled_core
+    from scripts.core.compiler import assert_jax_array
 
     # Collect config from steps
     cfg: Dict[str, Any] = {}
@@ -301,6 +304,13 @@ def run(recipe: Recipe) -> Dict[str, Any]:
 
     print("--- Starting experiment (DSL) ---")
 
+    # Training config/seed is needed early for deterministic dataset sampling.
+    tr_cfg = cfg.get("train", {})
+    seed = int(tr_cfg.get("seed", 42))
+    np.random.seed(seed)
+    import random as _random
+    _random.seed(seed)
+
     # Load dataset (with sampling) or synthesize if missing
     data_cfg = cfg.get("dataset.csv", {})
     path = data_cfg.get("path")
@@ -321,8 +331,6 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         y = (rng.random(n_rows) > 0.5).astype(int)
         data[label_col or "Label"] = y
         return pd.DataFrame(data)
-
-    import random as _random
 
     if path and os.path.exists(path):
         if sample_size is None:
@@ -350,13 +358,17 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     y = df[label_col]
 
     # Define a train-fitted coercion that applies consistently to test to avoid leakage
-    def _coerce_fit_apply(Xtr: "pd.DataFrame", Xte: "pd.DataFrame") -> Tuple["np.ndarray", "np.ndarray"]:
+    def _coerce_fit_apply(
+        Xtr: "pd.DataFrame", Xte: "pd.DataFrame"
+    ) -> Tuple["np.ndarray", "np.ndarray", Dict[str, Dict[str, Any]]]:
         Xtr2 = Xtr.copy()
         Xte2 = Xte.copy()
+        coerce_state: Dict[str, Dict[str, Any]] = {}
         for c in Xtr2.columns:
             trc = Xtr2[c]
             if pd.api.types.is_numeric_dtype(trc):
                 # Already numeric
+                coerce_state[c] = {"mode": "numeric", "median": None}
                 continue
             tr_num = pd.to_numeric(trc, errors="coerce")
             te_num = pd.to_numeric(Xte2[c], errors="coerce")
@@ -364,29 +376,55 @@ def run(recipe: Recipe) -> Dict[str, Any]:
                 med = float(tr_num.median()) if tr_num.notna().any() else 0.0
                 Xtr2[c] = tr_num.fillna(med)
                 Xte2[c] = te_num.fillna(med)
+                coerce_state[c] = {"mode": "numeric", "median": med}
             else:
                 cats = pd.Index(trc.astype(str).unique())
                 mapping = {k: float(i) for i, k in enumerate(cats)}
                 Xtr2[c] = trc.astype(str).map(mapping).astype("float64")
                 Xte2[c] = Xte2[c].astype(str).map(mapping).fillna(-1).astype("float64")
-        return Xtr2.values, Xte2.values
+                coerce_state[c] = {"mode": "categorical", "mapping": mapping, "unknown": -1.0}
+        return Xtr2.values, Xte2.values, coerce_state
+
+    def _coerce_binary_label(_y: "pd.Series", label_name: str) -> "pd.Series":
+        """Deterministically coerce labels to {0,1} without order-dependent factorization."""
+        if pd.api.types.is_numeric_dtype(_y):
+            return (pd.to_numeric(_y, errors="coerce").fillna(0) > 0).astype(int)
+
+        y_str = _y.astype(str).str.strip()
+        uniq = sorted(set(y_str.tolist()))
+        if len(uniq) != 2:
+            # Collapse to binary using deterministic lexicographic baseline class.
+            lo = uniq[0] if uniq else ""
+            return (y_str != lo).astype(int)
+
+        # Optional explicit override, e.g. EDGE_POSITIVE_LABEL=Attack.
+        env_pos = os.environ.get("EDGE_POSITIVE_LABEL")
+        if env_pos is not None:
+            pos = str(env_pos).strip()
+            if pos in uniq:
+                return (y_str == pos).astype(int)
+
+        # Domain-aware mapping for common binary security labels.
+        lower_map = {u.lower(): u for u in uniq}
+        pos_tokens = ("attack", "malicious", "anomaly", "intrusion", "true", "yes", "positive")
+        neg_tokens = ("benign", "normal", "false", "no", "negative")
+        pos = next((lower_map[t] for t in pos_tokens if t in lower_map), None)
+        neg = next((lower_map[t] for t in neg_tokens if t in lower_map), None)
+        if pos is not None and neg is not None and pos != neg:
+            print(f"Label mapping ({label_name}): positive='{pos}', negative='{neg}'")
+            return (y_str == pos).astype(int)
+
+        # Fallback deterministic mapping independent of first-seen order.
+        pos = uniq[-1]
+        neg = uniq[0]
+        print(f"Label mapping ({label_name}) fallback lexicographic: positive='{pos}', negative='{neg}'")
+        return (y_str == pos).astype(int)
 
     # Make sure label is binary numeric {0,1}
-    if not pd.api.types.is_numeric_dtype(y):
-        codes, uniques = pd.factorize(y.astype(str))
-        if len(uniques) == 2:
-            y = pd.Series(codes, index=y.index)
-        else:
-            # Collapse to binary by treating first observed value as 0, others as 1
-            y0 = codes[0] if len(codes) > 0 else 0
-            y = pd.Series((codes != y0).astype(int), index=y.index)
-    else:
-        # Map any non-zero to 1
-        y = (pd.to_numeric(y, errors="coerce").fillna(0) > 0).astype(int)
+    y = _coerce_binary_label(y, label_col or "label")
     print("Features and labels extracted.")
 
     # Split first (to avoid leakage), then coerce using train-fit, then optional PCA (fit on train)
-    tr_cfg = cfg.get("train", {})
     test_size = float(tr_cfg.get("test_size", 0.2))
     stratify = bool(tr_cfg.get("stratify", True))
     stratify_y = y if stratify else None
@@ -397,7 +435,7 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     print(f"Data split: X_train={X_train.shape}, X_test={X_test.shape}")
 
     # Coercion fit on train, apply to test
-    X_train, X_test = _coerce_fit_apply(X_train, X_test)
+    X_train, X_test, coerce_state = _coerce_fit_apply(X_train, X_test)
 
     # Track preprocessing pipeline components for persistence
     qt = None
@@ -459,11 +497,11 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     X_test_scaled = scaler.transform(X_test)
     print(f"Features scaled. X_train_scaled shape={X_train_scaled.shape}, X_test_scaled shape={X_test_scaled.shape}")
 
-    # Labels to {-1, 1} and {0,1}
-    Y_train = np.array(y_train.values * 2 - 1, requires_grad=False)
-    Y_test = np.array(y_test.values * 2 - 1, requires_grad=False)
-    Y_train01 = (Y_train > 0).astype(int)
-    Y_test01 = (Y_test > 0).astype(int)
+    # Labels to {-1, 1} and {0,1} (NumPy only)
+    Y_train = np.array(y_train.values * 2 - 1)
+    Y_test = np.array(y_test.values * 2 - 1)
+    Y_train01 = (Y_train > 0).astype(np.int32)
+    Y_test01 = (Y_test > 0).astype(np.int32)
 
     # Optional export of the PLS-transformed, scaled dataset as seen by QML.
     # This runs after quantile + PLS + MinMax scaling and uses numbered feature
@@ -517,22 +555,22 @@ def run(recipe: Recipe) -> Dict[str, Any]:
 
         # Validation threshold via ROC curve maximizing balanced accuracy
         try:
-            import numpy as _np
+            import numpy as np
             from sklearn.metrics import roc_curve
             val_size = min(max(1000, int(0.1 * len(X_train_scaled))), len(X_train_scaled))
             val_idx = np.random.randint(0, len(X_train_scaled), val_size)
             X_val = X_train_scaled[val_idx]
             Y_val01 = Y_train01[val_idx]
             # Ensure both classes present; if not, fallback to a larger slice or default threshold
-            if len(_np.unique(Y_val01)) < 2:
-                val_idx = _np.arange(0, min(len(X_train_scaled), 5000))
+            if len(np.unique(Y_val01)) < 2:
+                val_idx = np.arange(0, min(len(X_train_scaled), 5000))
                 X_val = X_train_scaled[val_idx]
                 Y_val01 = Y_train01[val_idx]
             prob_val = rf.predict_proba(X_val)[:, 1]
             fpr, tpr, thr = roc_curve(Y_val01, prob_val)
             # balanced accuracy = (tpr + (1 - fpr)) / 2
             bacc_arr = (tpr + (1.0 - fpr)) / 2.0
-            best_i = int(_np.nanargmax(bacc_arr)) if len(bacc_arr) else 0
+            best_i = int(np.nanargmax(bacc_arr)) if len(bacc_arr) else 0
             best_t = 0.5
             best_bacc = -1.0
             if len(thr):
@@ -615,7 +653,11 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     env_device = os.environ.get("QML_DEVICE")
     if env_device:
         dev_name = env_device
-    dev = qml.device(dev_name, wires=num_qubits)
+    dev_kwargs: Dict[str, Any] = {}
+    if dev_name == "lightning.gpu":
+        # Use single precision complex dtype for materially higher GPU throughput.
+        dev_kwargs["c_dtype"] = np.complex64
+    dev = qml.device(dev_name, wires=num_qubits, **dev_kwargs)
     print(f"Quantum device '{dev_name}' initialized with {num_qubits} wires.")
 
     # Encoder / Ansatz
@@ -630,9 +672,6 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     if anz_name not in ANSAETZE:
         raise ValueError(f"Unknown ansatz: {anz_name}")
 
-    encoder_fn = ENCODERS[enc_name]
-    ansatz_fn = ANSAETZE[anz_name]
-
     # Measurement configuration
     meas_cfg = cfg.get("measurement", {"name": "z0", "wires": [0]})
     meas_name = meas_cfg.get("name", "z0")
@@ -640,14 +679,6 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     # Ensure measurement wires are within device range; default to all wires if out-of-range
     if any((int(w) >= num_qubits or int(w) < 0) for w in meas_wires):
         meas_wires = list(range(num_qubits))
-
-    # Angle scaling for angle encoders
-    angle_scale = None
-    if enc_name.startswith("angle_embedding"):
-        if enc_cfg.get("angle_range") == "0_pi":
-            angle_scale = qml.numpy.pi
-        elif enc_cfg.get("angle_scale") is not None:
-            angle_scale = float(enc_cfg.get("angle_scale"))
 
     # Log concise configuration line
     print(
@@ -665,39 +696,22 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         )
     )
 
-    # QNode (built as a base QNode, then wrapped with batch_input)
-    def _circuit(weights, x):
-        # Optionally apply encoder before each layer (re-upload)
-        reupload = bool(enc_cfg.get("reupload", False))
-        if reupload:
-            def _reupload_layer(W):
-                encoder_fn(x, wires, hadamard=bool(enc_cfg.get("hadamard", False)), angle_scale=angle_scale)
-                ansatz_fn(W, wires)
-            qml.layer(_reupload_layer, num_layers, weights)
-        else:
-            encoder_fn(x, wires, hadamard=bool(enc_cfg.get("hadamard", False)), angle_scale=angle_scale)
-            qml.layer(ansatz_fn, num_layers, weights, wires=wires)
+    spec_hash = (
+        f"enc={enc_name}|ansatz={anz_name}|layers={num_layers}|meas={meas_name}"
+        f"|mw={','.join(map(str, meas_wires))}|had={int(bool(enc_cfg.get('hadamard', False)))}"
+        f"|reu={int(bool(enc_cfg.get('reupload', False)))}|qubits={num_qubits}|feat={feature_dim}"
+    )
+    backend = Backend(
+        device_name=dev_name,
+        dtype=jnp.float32,
+        compile_opts={"autograph": False},
+    )
+    batch_size = max(1, int(tr_cfg.get("batch", 256)))
+    lr = float(tr_cfg.get("lr", 0.1))
+    batched_forward = None
 
-        # Measurement
-        if meas_name == "mean_z":
-            if not meas_wires:
-                raise ValueError("mean_z measurement requires at least one wire")
-            coeffs = [1.0 / len(meas_wires)] * len(meas_wires)
-            ops = [qml.PauliZ(w) for w in meas_wires]
-            return qml.expval(qml.Hamiltonian(coeffs, ops))
-        else:  # default z0
-            return qml.expval(qml.PauliZ(0))
 
-    def square_loss(labels, predictions, class_weights=None):
-        loss = (labels - predictions) ** 2
-        if class_weights is not None:
-            loss = class_weights * loss
-        return np.mean(loss)
-
-    def accuracy(labels, predictions):
-        return np.sum(np.sign(predictions) == labels) / len(labels)
-
-    # Optional Weights & Biases streaming of training and evaluation metrics
+    # Optional Weights & Biases streaming of training metrics
     _wandb = None
     _wandb_can_log = False
     # Controlled via env; set EDGE_WANDB_LIVE=0 to disable streaming even if a run is active
@@ -723,7 +737,6 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         loss: float,
         acc: float,
         start_time: float,
-        eval_metrics: Dict[str, float] | None = None,
     ) -> None:
         """Best-effort streaming of current training and evaluation metrics to W&B.
 
@@ -744,19 +757,13 @@ def run(recipe: Recipe) -> Dict[str, Any]:
                 # Time-based x-axis reference (seconds since training started)
                 "time_s": float(t_rel),
             }
-            if eval_metrics is not None:
-                # Log evolving evaluation metrics under the same keys used for final metrics
-                for k, v in eval_metrics.items():
-                    payload[f"metrics/{k}"] = float(v)
             _wandb.log(payload)  # type: ignore[union-attr]
         except Exception:
             # Never let logging issues break training
             pass
 
     # Training setup
-    seed = int(tr_cfg.get("seed", 42))
     np.random.seed(seed)
-    _np.random.seed(seed)
     try:
         import random as _py_random
         _py_random.seed(seed)
@@ -769,187 +776,287 @@ def run(recipe: Recipe) -> Dict[str, Any]:
             _torch.cuda.manual_seed_all(seed)
     except Exception:
         pass
-    weights_init = 0.01 * np.random.randn(num_layers, num_qubits, 3, requires_grad=True)
-    bias_init = np.array(0.0, requires_grad=True)
-    alpha_init = np.array(1.0, requires_grad=True)
+    weights_init = jnp.array(0.01 * np.random.randn(num_layers, num_qubits, 3), dtype=backend.dtype)
+    bias_init = jnp.array(0.0, dtype=backend.dtype)
+    assert_jax_array("weights_init", weights_init, backend.dtype)
+    assert_jax_array("bias_init", bias_init, backend.dtype)
 
-    def _build_batched_qnode(sample_x):
-        base_qnode = qml.QNode(_circuit, dev, interface="autograd", diff_method="adjoint", cache=True)
-        tape = base_qnode.construct([weights_init, sample_x], {})
-        all_params = tape.get_parameters(trainable_only=False)
-        trainable = set(tape.trainable_params)
-        argnum = [i for i in range(len(all_params)) if i not in trainable]
-        if not argnum:
-            return base_qnode
-        return qml.batch_input(base_qnode, argnum=argnum)
-
-    sample_x = _np.asarray(X_train_scaled[0], dtype=_np.float64)
-    circuit = _build_batched_qnode(sample_x)
-
-    def variational_classifier(weights, bias, alpha, X_np):
-        X_np = _np.asarray(X_np, dtype=_np.float64)
-        res = circuit(weights, X_np)
-        return alpha * res + bias
-
-    def _predict_logits(weights, bias, alpha, X_input):
-        return variational_classifier(weights, bias, alpha, X_input)
-
-    lr = float(tr_cfg.get("lr", 0.1))
-    # Always use a fixed mini-batch size of 256 for training (clipped by dataset size)
     epochs = int(tr_cfg.get("epochs", 1))
-    batch_size = min(256, len(X_train_scaled))
-    opt = AdamOptimizer(lr)
+    cpu_fuse_epochs = (
+        dev_name != "lightning.gpu"
+        and epochs > 1
+        and os.environ.get("EDGE_CPU_FUSE_EPOCHS", "1") != "0"
+    )
+    np_rng = np.random.default_rng(seed)
+    val_frac = float(tr_cfg.get("val_size", 0.1))
+
+    # Hold out a true validation split from training data for calibration/monitoring.
+    if (
+        0.0 < val_frac < 0.5
+        and len(X_train_scaled) >= 20
+        and len(np.unique(Y_train01)) >= 2
+    ):
+        X_fit_scaled, X_val_scaled, Y_fit, Y_val_hold, Y_fit01, Y_val_hold01 = train_test_split(
+            X_train_scaled,
+            Y_train,
+            Y_train01,
+            test_size=val_frac,
+            random_state=seed,
+            stratify=Y_train01,
+        )
+    else:
+        X_fit_scaled = X_train_scaled
+        Y_fit = Y_train
+        Y_fit01 = Y_train01
+        X_val_scaled = X_train_scaled
+        Y_val_hold = Y_train
+        Y_val_hold01 = Y_train01
 
     class_weights_mode = tr_cfg.get("class_weights", "balanced")
     class_weights_map = None
     if class_weights_mode == "balanced":
-        cls_labels = np.unique(Y_train)
+        cls_labels = np.unique(Y_fit)
         cls_weights_array = compute_class_weight(
-            class_weight="balanced", classes=cls_labels, y=Y_train
+            class_weight="balanced", classes=cls_labels, y=Y_fit
         )
-        class_weights_map = {label: weight for label, weight in zip(cls_labels, cls_weights_array)}
+        class_weights_map = {int(label): float(weight) for label, weight in zip(cls_labels, cls_weights_array)}
         print(f"Class weights: {class_weights_map}")
     # Weights for {0,1} labels (for logistic loss)
     class_weights01_map = None
     if class_weights_mode == "balanced":
-        cls01 = np.unique(Y_train01)
-        w01 = compute_class_weight(class_weight="balanced", classes=cls01, y=Y_train01)
+        cls01 = np.unique(Y_fit01)
+        w01 = compute_class_weight(class_weight="balanced", classes=cls01, y=Y_fit01)
         class_weights01_map = {int(label): float(weight) for label, weight in zip(cls01, w01)}
 
-    def _bce_with_logits(logits, targets01, sample_weights=None):
-        # Stable BCEWithLogits: max(0, x) - x*y + log(1+exp(-|x|))
-        x = logits
-        y01 = targets01
-        term = np.maximum(0.0, x) - x * y01 + np.log1p(np.exp(-np.abs(x)))
-        if sample_weights is not None:
-            term = sample_weights * term
-        return np.mean(term)
+    # Training pool (pad once so batch size and epoch batch tensor shapes stay constant)
+    X_train_pool = X_fit_scaled
+    Y_train_pool = Y_fit
+    Y_train01_pool = Y_fit01
+    if len(X_train_pool) < batch_size:
+        pad_count = batch_size - len(X_train_pool)
+        pad_idx = np_rng.integers(0, len(X_train_pool), pad_count)
+        X_train_pool = np.concatenate([X_train_pool, X_train_pool[pad_idx]], axis=0)
+        Y_train_pool = np.concatenate([Y_train_pool, Y_train_pool[pad_idx]], axis=0)
+        Y_train01_pool = np.concatenate([Y_train01_pool, Y_train01_pool[pad_idx]], axis=0)
+    rem = len(X_train_pool) % batch_size
+    if rem != 0:
+        pad_count = batch_size - rem
+        pad_idx = np_rng.integers(0, len(X_train_pool), pad_count)
+        X_train_pool = np.concatenate([X_train_pool, X_train_pool[pad_idx]], axis=0)
+        Y_train_pool = np.concatenate([Y_train_pool, Y_train_pool[pad_idx]], axis=0)
+        Y_train01_pool = np.concatenate([Y_train01_pool, Y_train01_pool[pad_idx]], axis=0)
+    if class_weights01_map:
+        w_train_pool = np.array([class_weights01_map[int(label)] for label in Y_train01_pool], dtype=np.float32)
+    else:
+        w_train_pool = np.ones((len(X_train_pool),), dtype=np.float32)
+    # Pre-scale once on host so the compiled quantum graph stays minimal.
+    if enc_name in {"angle_embedding_y", "angle_pair_xy"}:
+        if enc_cfg.get("angle_range") == "0_pi":
+            angle_scale = np.float32(np.pi)
+        elif enc_cfg.get("angle_scale") is not None:
+            angle_scale = np.float32(float(enc_cfg.get("angle_scale")))
+        else:
+            angle_scale = np.float32(1.0)
+    else:
+        angle_scale = np.float32(1.0)
+    X_train_pool = np.asarray(X_train_pool, dtype=np.float32) * angle_scale
+    X_val_scaled = np.asarray(X_val_scaled, dtype=np.float32) * angle_scale
+    X_test_scaled = np.asarray(X_test_scaled, dtype=np.float32) * angle_scale
 
-    def cost(weights, bias, alpha, X_np, Y_np):
-        preds = _predict_logits(weights, bias, alpha, X_np)
-        # Use logistic loss for classification
-        y01 = (Y_np > 0).astype(int)
-        wts = None
-        if class_weights01_map:
-            wts = np.array([class_weights01_map[int(label)] for label in y01])
-        return _bce_with_logits(preds, y01, sample_weights=wts)
+    # Compile an epoch-sized training kernel with device-side batch traversal.
+    num_it_data = max(1, len(X_train_pool) // batch_size)
+    compiled_steps_cfg = tr_cfg.get("compiled_steps")
+    if compiled_steps_cfg is None:
+        compiled_steps_env = os.environ.get("EDGE_COMPILED_STEPS")
+        compiled_steps_cfg = int(compiled_steps_env) if compiled_steps_env else 0
+    compiled_steps = int(compiled_steps_cfg) if compiled_steps_cfg else 0
+    num_it = compiled_steps if compiled_steps > 0 else num_it_data
+    compile_num_batches = num_it * epochs if cpu_fuse_epochs else num_it
+    lr_j = jnp.asarray(lr, dtype=backend.dtype)
+    compiled = get_compiled_core(
+        num_qubits,
+        num_layers,
+        backend,
+        spec_hash,
+        shape_key=(batch_size, feature_dim, num_qubits),
+        encoder_name=str(enc_name),
+        ansatz_name=str(anz_name),
+        measurement_name=str(meas_name),
+        measurement_wires=tuple(int(w) for w in meas_wires),
+        hadamard=bool(enc_cfg.get("hadamard", False)),
+        reupload=bool(enc_cfg.get("reupload", False)),
+        num_batches=compile_num_batches,
+        batch_size=batch_size,
+    )
+    batched_forward = compiled["batched_forward"]
+    train_epoch_compiled = compiled["train_epoch_compiled"]
+    init_opt_state = compiled["init_opt_state"]
+    assert_no_python_callback_ir = compiled.get("assert_no_python_callback_ir")
+    # Force qjit compilation with concrete arrays before entering jitted epoch scans.
+    _ = np.asarray(batched_forward(weights_init, jnp.asarray(X_train_pool[:1], dtype=backend.dtype)))
 
     # Training loop (epochs)
-    weights = weights_init
-    bias = bias_init
-    alpha = alpha_init
+    alpha_init = jnp.array(1.0, dtype=backend.dtype)
+    assert_jax_array("alpha_init", alpha_init, backend.dtype)
+    params = (weights_init, bias_init, alpha_init)
+    train_state = (params, init_opt_state(params))
+    rng_key = jax.random.PRNGKey(seed)
+    _warm_idx = np.arange(compile_num_batches * batch_size, dtype=np.int32).reshape(
+        compile_num_batches, batch_size
+    )
+    X_steps_warm = jnp.asarray(X_train_pool[_warm_idx % len(X_train_pool)], dtype=backend.dtype)
+    Y_steps_warm = jnp.asarray(Y_train01_pool[_warm_idx % len(Y_train01_pool)], dtype=backend.dtype)
+    w_steps_warm = jnp.asarray(w_train_pool[_warm_idx % len(w_train_pool)], dtype=backend.dtype)
+    if os.environ.get("EDGE_ENFORCE_NO_PY_CALLBACK", "0") != "0" and callable(assert_no_python_callback_ir):
+        assert_no_python_callback_ir(train_state, rng_key, X_steps_warm, Y_steps_warm, w_steps_warm, lr_j)
     start_time = time.time()
     total_iters = 0
     _early_stop = False
-    for ep in range(epochs):
-        num_it = max(1, len(X_train_scaled) // batch_size)
-        print(f"Epoch {ep+1}/{epochs} | iters={num_it} | batch_size={batch_size}", flush=True)
-        for it in range(num_it):
-            batch_index = _np.random.randint(0, len(X_train_scaled), (batch_size,))
-            X_batch = X_train_scaled[batch_index]
-            Y_batch = Y_train[batch_index]
-            print(f"Epoch {ep+1} Iter {it+1}/{num_it} start", flush=True)
+    X_val_j = jnp.asarray(X_val_scaled, dtype=backend.dtype)
+    X_test_j = jnp.asarray(X_test_scaled, dtype=backend.dtype)
+    cache_key = (
+        int(seed),
+        int(len(X_train_pool)),
+        int(epochs),
+        int(num_it),
+        int(batch_size),
+        int(compiled_steps),
+    )
+    idx_steps_all = _BATCH_INDEX_CACHE.get(cache_key)
+    if idx_steps_all is None:
+        idx_steps_all = np.empty((epochs, num_it, batch_size), dtype=np.int32)
+        for ep in range(epochs):
+            if compiled_steps > 0:
+                idx_steps_all[ep] = np_rng.integers(
+                    0, len(X_train_pool), size=(num_it, batch_size), dtype=np.int32
+                )
+            else:
+                perm = np_rng.permutation(len(X_train_pool)).astype(np.int32, copy=False)
+                idx_steps_all[ep] = perm[: num_it * batch_size].reshape(num_it, batch_size)
+        _BATCH_INDEX_CACHE[cache_key] = idx_steps_all
+
+    if cpu_fuse_epochs:
+        print(
+            f"CPU fused training | epochs={epochs} | iters/epoch={num_it} | total_iters={compile_num_batches} | "
+            f"batch_size={batch_size}",
+            flush=True,
+        )
+        idx_steps_flat = idx_steps_all.reshape(compile_num_batches, batch_size)
+        X_steps_j = jnp.asarray(X_train_pool[idx_steps_flat], dtype=backend.dtype)
+        Y_steps_j = jnp.asarray(Y_train01_pool[idx_steps_flat], dtype=backend.dtype)
+        w_steps_j = jnp.asarray(w_train_pool[idx_steps_flat], dtype=backend.dtype)
+        iter_start = time.time()
+        train_state, rng_key, loss_stats = train_epoch_compiled(
+            train_state,
+            rng_key,
+            X_steps_j,
+            Y_steps_j,
+            w_steps_j,
+            lr_j,
+        )
+        loss_stats.block_until_ready()
+        iter_s = time.time() - iter_start
+        total_iters = compile_num_batches
+        params, _ = train_state
+        weights, bias, alpha = params
+        loss_stats_np = np.asarray(loss_stats)
+        c_mean = float(loss_stats_np[0]) if loss_stats_np.size >= 1 else float("nan")
+        c_b = float(loss_stats_np[1]) if loss_stats_np.size >= 2 else float("nan")
+        print(
+            f"CPU fused done | mean_loss={c_mean:0.7f} | last_loss={c_b:0.7f} | Time: {iter_s:.2f}s",
+            flush=True,
+        )
+        _log_train_metrics_to_wandb(
+            epoch=epochs,
+            iter_in_epoch=num_it,
+            total_iters=total_iters,
+            batch_size=batch_size,
+            loss=float(c_mean),
+            acc=float("nan"),
+            start_time=start_time,
+        )
+    else:
+        for ep in range(epochs):
+            print(f"Epoch {ep+1}/{epochs} | iters={num_it} | batch_size={batch_size}", flush=True)
+            idx_steps = idx_steps_all[ep]
+            X_steps_j = jnp.asarray(X_train_pool[idx_steps], dtype=backend.dtype)
+            Y_steps_j = jnp.asarray(Y_train01_pool[idx_steps], dtype=backend.dtype)
+            w_steps_j = jnp.asarray(w_train_pool[idx_steps], dtype=backend.dtype)
             iter_start = time.time()
-            weights, bias, alpha = opt.step(
-                lambda w, b, a: cost(w, b, a, X_batch, Y_batch), weights, bias, alpha
+            train_state, rng_key, loss_stats = train_epoch_compiled(
+                train_state,
+                rng_key,
+                X_steps_j,
+                Y_steps_j,
+                w_steps_j,
+                lr_j,
             )
+            # Ensure async dispatches are accounted in timings/log output.
+            loss_stats.block_until_ready()
             iter_s = time.time() - iter_start
-            total_iters += 1
-            if (it + 1) % 10 == 0 or (it + 1) == num_it:
-                preds_b = _predict_logits(weights, bias, alpha, X_batch)
-                c_b = cost(weights, bias, alpha, X_batch, Y_batch)
-                a_b = accuracy(Y_batch, preds_b)
+            total_iters += num_it
+            params, _ = train_state
+            weights, bias, alpha = params
+            loss_stats_np = np.asarray(loss_stats)
+            c_mean = float(loss_stats_np[0]) if loss_stats_np.size >= 1 else float("nan")
+            c_b = float(loss_stats_np[1]) if loss_stats_np.size >= 2 else float("nan")
+            print(
+                f"Epoch {ep+1}/{epochs} done | mean_loss={c_mean:0.7f} | "
+                f"last_loss={c_b:0.7f} | Epoch Time: {iter_s:.2f}s",
+                flush=True,
+            )
+
+            _log_train_metrics_to_wandb(
+                epoch=ep + 1,
+                iter_in_epoch=num_it,
+                total_iters=total_iters,
+                batch_size=batch_size,
+                loss=float(c_mean),
+                acc=float("nan"),
+                start_time=start_time,
+            )
+            if not np.isfinite(c_b):
+                print("Early exit: non-finite batch loss detected; stopping training early.")
+                _early_stop = True
+            if _early_stop:
+                break
+
+    train_time_s = time.time() - start_time
+    iters_per_s = float(total_iters / train_time_s) if train_time_s > 0 else float("nan")
+    print(
+        f"Training finished in {train_time_s:.2f}s over {epochs} epoch(s), {total_iters} iters. "
+        f"Iters/sec: {iters_per_s:0.2f}"
+    )
+
+    params, _ = train_state
+    weights, bias, alpha = params
+
+    # Validation calibration on held-out validation split.
+    X_val = X_val_scaled
+    Y_val = Y_val_hold
+    Y_val01 = Y_val_hold01
+    preds_val = np.array(alpha * batched_forward(weights, X_val_j) + bias)
+    val_auc_raw = float("nan")
+    val_auc_inv = float("nan")
+    try:
+        if len(np.unique(Y_val01)) >= 2:
+            val_auc_raw = float(roc_auc_score(Y_val01, preds_val))
+            val_auc_inv = float(roc_auc_score(Y_val01, -preds_val))
+            if np.isfinite(val_auc_raw) and np.isfinite(val_auc_inv) and val_auc_inv > val_auc_raw:
                 print(
-                    f"Epoch {ep+1} Iter {it+1}/{num_it} | "
-                    f"Batch Loss: {c_b:0.7f} | Batch Acc: {a_b:0.7f} | "
-                    f"Iter Time: {iter_s:.2f}s",
-                    flush=True,
+                    f"[WARN] Validation AUC inversion detected: auc={val_auc_raw:.4f}, "
+                    f"auc_inv={val_auc_inv:.4f}. Check label/score polarity."
                 )
-                # Optionally evaluate on a held-out subset of the test set to track
-                # how metrics evolve over wall-clock time. This is intentionally
-                # approximate (subset, fixed threshold) but gives a useful trend.
-                eval_metrics = None
-                if _wandb_can_log:
-                    try:
-                        eval_size = min(1000, len(X_test_scaled))
-                        eval_idx = _np.random.randint(0, len(X_test_scaled), eval_size)
-                        X_eval = X_test_scaled[eval_idx]
-                        Y_eval = Y_test[eval_idx]
-                        Y_eval01 = Y_test01[eval_idx]
-                        logits_eval = _predict_logits(weights, bias, alpha, X_eval)
-                        preds_eval = np.where(logits_eval >= 0.0, 1, -1)
-                        acc_eval = float(accuracy_score(Y_eval, preds_eval))
-                        prec_eval = float(precision_score(Y_eval, preds_eval, average="macro", zero_division=0))
-                        rec_eval = float(recall_score(Y_eval, preds_eval, average="macro", zero_division=0))
-                        f1_eval = float(f1_score(Y_eval, preds_eval, average="macro", zero_division=0))
-                        # Avoid sklearn's "y_pred contains classes not in y_true" warning
-                        # by skipping balanced_accuracy when predicted classes extend
-                        # beyond those present in the evaluation slice.
-                        true_classes_eval = np.unique(Y_eval)
-                        pred_classes_eval = np.unique(preds_eval)
-                        if (
-                            len(true_classes_eval) < 2
-                            or len(np.setdiff1d(pred_classes_eval, true_classes_eval)) > 0
-                        ):
-                            bacc_eval = float("nan")
-                        else:
-                            bacc_eval = float(balanced_accuracy_score(Y_eval, preds_eval))
-                        try:
-                            auc_eval = float(roc_auc_score(Y_eval01, logits_eval))
-                        except Exception:
-                            auc_eval = float("nan")
-                        eval_metrics = {
-                            "accuracy": acc_eval,
-                            "precision": prec_eval,
-                            "recall": rec_eval,
-                            "f1": f1_eval,
-                            "balanced_accuracy": bacc_eval,
-                            "auc": auc_eval,
-                        }
-                    except Exception:
-                        eval_metrics = None
-
-                # Stream "current" metrics (train + eval) to W&B on a time-based axis
-                _log_train_metrics_to_wandb(
-                    epoch=ep + 1,
-                    iter_in_epoch=it + 1,
-                    total_iters=total_iters,
-                    batch_size=batch_size,
-                    loss=float(c_b),
-                    acc=float(a_b),
-                    start_time=start_time,
-                    eval_metrics=eval_metrics,
-                )
-                # Early exit on non-finite loss to avoid noisy logs and wasted compute
-                if not np.isfinite(c_b):
-                    print("Early exit: non-finite batch loss detected; stopping training early.")
-                    _early_stop = True
-                    break
-            elif (it + 1) % 2 == 0:
-                # Heartbeat to show forward/backward is still running
-                print(
-                    f"Epoch {ep+1} Iter {it+1}/{num_it} | Iter Time: {iter_s:.2f}s",
-                    flush=True,
-                )
-        if _early_stop:
-            break
-
-    print(f"Training finished in {time.time() - start_time:.2f}s over {epochs} epoch(s), {total_iters} iters.")
-
-    # Validation quick check (use a small random subset if large)
-    val_size = min(5 * batch_size, len(X_train_scaled))
-    val_idx = _np.random.randint(0, len(X_train_scaled), val_size)
-    X_val = X_train_scaled[val_idx]
-    Y_val = Y_train[val_idx]
-    preds_val = _predict_logits(weights, bias, alpha, X_val)
+    except Exception:
+        pass
     # Choose threshold to maximize balanced accuracy on validation.
     # Guard against degenerate validation slices that contain only a single class,
     # which would otherwise trigger sklearn's
     # "y_pred contains classes not in y_true" warning inside balanced_accuracy_score.
     try:
-        import numpy as _np
+        import numpy as np
 
-        unique_val_classes = _np.unique(Y_val)
+        unique_val_classes = np.unique(Y_val)
         if len(unique_val_classes) < 2:
             # Cannot compute a meaningful balanced accuracy if only one class is present.
             # Fall back to a default threshold without scanning candidates.
@@ -960,13 +1067,13 @@ def run(recipe: Recipe) -> Dict[str, Any]:
                 "using default threshold 0.0 without balanced accuracy sweep."
             )
         else:
-            th_candidates = _np.unique(
-                _np.concatenate([[-_np.inf, _np.inf], preds_val])
+            th_candidates = np.unique(
+                np.concatenate([[-np.inf, np.inf], preds_val])
             )
             best_t = 0.0
             best_bacc = -1.0
             for t in th_candidates:
-                preds_lab = _np.where(preds_val >= t, 1, -1)
+                preds_lab = np.where(preds_val >= t, 1, -1)
                 b = float(balanced_accuracy_score(Y_val, preds_lab))
                 if b > best_bacc:
                     best_bacc = b
@@ -979,7 +1086,7 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         best_bacc = float("nan")
 
     # Test evaluation (batched)
-    predictions = np.array(_predict_logits(weights, bias, alpha, X_test_scaled))
+    predictions = np.array(alpha * batched_forward(weights, X_test_j) + bias)
 
     # Threshold from validation to maximize balanced accuracy
     predictions_signed = np.where(predictions >= best_t, 1, -1)
@@ -1014,6 +1121,9 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     print("--------------------")
     print("Experiment complete.")
 
+    alpha = np.array(alpha)
+    score_sign = np.array(1.0)
+
     # Optional model save
     save_cfg = cfg.get("model.save")
     if save_cfg is not None:
@@ -1031,6 +1141,7 @@ def run(recipe: Recipe) -> Dict[str, Any]:
             measurement={"name": meas_name, "wires": meas_wires},
             features=features,
             label=label_col,
+            coerce_state=coerce_state,
             scaler=scaler,
             quantile=qt,
             pls=pls,
@@ -1038,6 +1149,8 @@ def run(recipe: Recipe) -> Dict[str, Any]:
             weights=weights,
             bias=bias,
             alpha=alpha,
+            score_sign=score_sign,
+            compiled_input_scale=float(angle_scale),
             train_cfg={"lr": lr, "batch": batch_size, "epochs": epochs},
             metrics={"accuracy": acc, "precision": prec, "recall": rec, "f1": f1, "balanced_accuracy": bacc, "auc": auc, "val_balanced_accuracy": best_bacc, "threshold": best_t},
         )
@@ -1070,6 +1183,7 @@ def _save_model_torch(
     measurement: Dict[str, Any],
     features: List[str],
     label: str,
+    coerce_state: Dict[str, Dict[str, Any]],
     scaler: Any,
     quantile: Any,
     pls: Any,
@@ -1077,21 +1191,24 @@ def _save_model_torch(
     weights: Any,
     bias: Any,
     alpha: Any,
+    score_sign: Any,
+    compiled_input_scale: float,
     train_cfg: Dict[str, Any],
     metrics: Dict[str, float],
 ) -> None:
     import os as _os
     import torch as _torch
-    from pennylane import numpy as _np
+    from pennylane import numpy as np
 
     _dir = _os.path.dirname(path)
     if _dir:
         _os.makedirs(_dir, exist_ok=True)
 
     # Convert parameters to torch tensors (detach from autograd if present)
-    weights_np = _np.array(weights)
-    bias_np = _np.array(bias)
-    alpha_np = _np.array(alpha)
+    weightsnp = np.array(weights)
+    biasnp = np.array(bias)
+    alphanp = np.array(alpha)
+    score_sign_np = np.array(score_sign)
     # Try to capture scaler/preprocessing state minimally to avoid unsafe pickle on load
     scaler_state = None
     try:
@@ -1166,6 +1283,7 @@ def _save_model_torch(
         "measurement": measurement,
         "features": list(features),
         "label": label,
+        "coerce_state": coerce_state,
         # Keep original for backward compat but also include a safe state
         "scaler": scaler,
         "scaler_state": scaler_state,
@@ -1175,11 +1293,14 @@ def _save_model_torch(
         "pls_state": pls_state,
         "pca": pca,
         "pca_state": pca_state,
-        "weights": _torch.tensor(weights_np, dtype=_torch.float32),
-        "bias": _torch.tensor(bias_np, dtype=_torch.float32),
-        "alpha": _torch.tensor(alpha_np, dtype=_torch.float32),
+        "weights": _torch.tensor(weightsnp, dtype=_torch.float32),
+        "bias": _torch.tensor(biasnp, dtype=_torch.float32),
+        "alpha": _torch.tensor(alphanp, dtype=_torch.float32),
+        "score_sign": _torch.tensor(score_sign_np, dtype=_torch.float32),
+        "compiled_input_scale": float(compiled_input_scale),
         "train": train_cfg,
         "metrics": metrics,
+        "threshold": metrics.get("threshold", 0.0),
     }
     _torch.save(state, path)
     # Avoid redundant duplicate log lines for the same model within one process
@@ -1192,8 +1313,8 @@ def _save_model_torch(
 def load_model(path: str, device_override: Optional[str] = None):
     import torch as _torch
     import pennylane as qml
-    from pennylane import numpy as _np
-    import numpy as _npy
+    from pennylane import numpy as np
+    import numpy as npy
     import pandas as _pd
 
     # Allowlist sklearn components for safe unpickling of legacy checkpoints
@@ -1237,7 +1358,10 @@ def load_model(path: str, device_override: Optional[str] = None):
 
     dev_name = device_override or state.get("device", "lightning.qubit")
     num_qubits = int(state["num_qubits"]) if "num_qubits" in state else len(state.get("features", []))
-    dev = qml.device(dev_name, wires=num_qubits)
+    dev_kwargs: Dict[str, Any] = {}
+    if dev_name == "lightning.gpu":
+        dev_kwargs["c_dtype"] = npy.complex64
+    dev = qml.device(dev_name, wires=num_qubits, **dev_kwargs)
 
     enc_name = state["encoder"]
     anz_name = state["ansatz"]
@@ -1264,14 +1388,14 @@ def load_model(path: str, device_override: Optional[str] = None):
 
     def _circuit(weights, x):
         reupload = bool(enc_opts.get("reupload", False))
-        if reupload:
+        if reupload and anz_name == "ring_rot_cnot":
             def _reupload_layer(W):
                 encoder_fn(x, wires, hadamard=bool(enc_opts.get("hadamard", False)), angle_scale=angle_scale)
                 ansatz_fn(W, wires)
             qml.layer(_reupload_layer, num_layers, weights)
         else:
             encoder_fn(x, wires, hadamard=bool(enc_opts.get("hadamard", False)), angle_scale=angle_scale)
-            qml.layer(ansatz_fn, num_layers, weights, wires=wires)
+            ansatz_fn(weights, wires)
         if meas_name == "mean_z":
             if not meas_wires:
                 raise ValueError("mean_z measurement requires at least one wire")
@@ -1286,12 +1410,24 @@ def load_model(path: str, device_override: Optional[str] = None):
     bias_t = state["bias"].detach().cpu().numpy().item() if state["bias"].ndim == 0 else state["bias"].detach().cpu().numpy()
     alpha_t = state.get("alpha")
     if alpha_t is None:
-        alpha_t = _np.array(1.0)
+        alpha_t = np.array(1.0)
     else:
         alpha_t = alpha_t.detach().cpu().numpy().item() if alpha_t.ndim == 0 else alpha_t.detach().cpu().numpy()
-    weights_np = _np.array(weights_t, requires_grad=False)
-    bias_np = _np.array(bias_t, requires_grad=False)
-    alpha_np = _np.array(alpha_t, requires_grad=False)
+    weightsnp = np.array(weights_t, requires_grad=False)
+    biasnp = np.array(bias_t, requires_grad=False)
+    alphanp = np.array(alpha_t, requires_grad=False)
+    score_sign_t = state.get("score_sign")
+    if score_sign_t is None:
+        score_sign_t = np.array(1.0)
+    elif hasattr(score_sign_t, "detach"):
+        score_sign_t = (
+            score_sign_t.detach().cpu().numpy().item()
+            if getattr(score_sign_t, "ndim", 0) == 0
+            else score_sign_t.detach().cpu().numpy()
+        )
+    else:
+        score_sign_t = npy.asarray(score_sign_t)
+    score_sign_np = np.array(score_sign_t, requires_grad=False)
     # Rebuild preprocessing either from embedded object or from safe state
     scaler = state.get("scaler")
     if scaler is None and state.get("scaler_state") is not None:
@@ -1303,7 +1439,7 @@ def load_model(path: str, device_override: Optional[str] = None):
                 for attr in ["min_", "scale_", "data_min_", "data_max_", "data_range_", "n_samples_seen_"]:
                     val = st.get(attr)
                     if val is not None:
-                        setattr(sc, attr, _np.array(val))
+                        setattr(sc, attr, np.array(val))
                 scaler = sc
         except Exception:
             scaler = None
@@ -1321,7 +1457,7 @@ def load_model(path: str, device_override: Optional[str] = None):
                 for attr in ["n_quantiles_", "quantiles_", "references_", "n_features_in_"]:
                     val = st.get(attr)
                     if val is not None:
-                        setattr(qt, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+                        setattr(qt, attr, np.array(val) if attr != "n_features_in_" else int(val))
                 quantile = qt
         except Exception:
             quantile = None
@@ -1334,7 +1470,7 @@ def load_model(path: str, device_override: Optional[str] = None):
                 for attr in ["x_mean_", "x_std_", "x_weights_", "x_rotations_", "n_features_in_"]:
                     val = st.get(attr)
                     if val is not None:
-                        setattr(pls_r, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+                        setattr(pls_r, attr, np.array(val) if attr != "n_features_in_" else int(val))
                 pls = pls_r
         except Exception:
             pls = None
@@ -1347,11 +1483,14 @@ def load_model(path: str, device_override: Optional[str] = None):
                 for attr in ["components_", "mean_", "n_features_in_"]:
                     val = st.get(attr)
                     if val is not None:
-                        setattr(pca_r, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+                        setattr(pca_r, attr, np.array(val) if attr != "n_features_in_" else int(val))
                 pca = pca_r
         except Exception:
             pca = None
     features = state.get("features", [])
+    coerce_state = state.get("coerce_state") or {}
+    threshold = float(state.get("threshold", state.get("metrics", {}).get("threshold", 0.0)))
+    compiled_input_scale = float(state.get("compiled_input_scale", 1.0))
 
     class LoadedQuantumClassifier:
         def __init__(self):
@@ -1360,20 +1499,54 @@ def load_model(path: str, device_override: Optional[str] = None):
             self.quantile = quantile
             self.pls = pls
             self.pca = pca
-            self.weights = weights_np
-            self.bias = bias_np
-            self.alpha = alpha_np
+            self.coerce_state = coerce_state
+            self.weights = weightsnp
+            self.bias = biasnp
+            self.alpha = alphanp
+            self.score_sign = score_sign_np
+            self.threshold = threshold
+            self.compiled_input_scale = compiled_input_scale
             self._circuit = None
 
         def _to_numpy(self, X):
             if isinstance(X, _pd.DataFrame):
                 if self.features:
                     X = X[self.features]
-                X = X.values
+                X_df = X.copy()
+                # Re-apply training-time coercion for raw tabular features.
+                if self.coerce_state:
+                    for c in X_df.columns:
+                        st = self.coerce_state.get(c)
+                        if not isinstance(st, dict):
+                            continue
+                        mode = st.get("mode")
+                        if mode == "categorical":
+                            mapping = st.get("mapping", {})
+                            unk = float(st.get("unknown", -1.0))
+                            X_df[c] = X_df[c].astype(str).map(mapping).fillna(unk).astype("float64")
+                        else:
+                            med = st.get("median", None)
+                            s_num = _pd.to_numeric(X_df[c], errors="coerce")
+                            if med is not None:
+                                X_df[c] = s_num.fillna(float(med))
+                            else:
+                                X_df[c] = s_num
+                else:
+                    # Backward compatibility: best-effort coercion for older checkpoints.
+                    for c in X_df.columns:
+                        s_num = _pd.to_numeric(X_df[c], errors="coerce")
+                        if s_num.notna().any():
+                            med = float(s_num.median()) if s_num.notna().any() else 0.0
+                            X_df[c] = s_num.fillna(med)
+                        else:
+                            cats = _pd.Index(X_df[c].astype(str).unique())
+                            mapping = {k: float(i) for i, k in enumerate(cats)}
+                            X_df[c] = X_df[c].astype(str).map(mapping).astype("float64")
+                X = X_df.values
             elif isinstance(X, _pd.Series):
                 X = X.values.reshape(1, -1)
             else:
-                X = _npy.asarray(X)
+                X = npy.asarray(X)
             if self.quantile is not None:
                 X = self.quantile.transform(X)
             if self.pls is not None:
@@ -1382,38 +1555,32 @@ def load_model(path: str, device_override: Optional[str] = None):
                 X = self.pca.transform(X)
             if self.scaler is not None:
                 X = self.scaler.transform(X)
+            if self.compiled_input_scale != 1.0:
+                X = X * self.compiled_input_scale
             return X
 
         def _get_circuit(self, Xn):
             if self._circuit is not None:
                 return self._circuit
-            sample_x = Xn[0] if len(Xn.shape) > 1 else Xn
-            sample_x = _npy.asarray(sample_x, dtype=_npy.float64)
-            base_qnode = qml.QNode(_circuit, dev, interface="autograd", diff_method="adjoint", cache=True)
-            tape = base_qnode.construct([self.weights, sample_x], {})
-            all_params = tape.get_parameters(trainable_only=False)
-            trainable = set(tape.trainable_params)
-            argnum = [i for i in range(len(all_params)) if i not in trainable]
-            if argnum:
-                self._circuit = qml.batch_input(base_qnode, argnum=argnum)
-            else:
-                self._circuit = base_qnode
+            self._circuit = qml.QNode(_circuit, dev, interface="autograd", cache=True)
             return self._circuit
 
-        def _variational_classifier(self, X_np):
-            X_np = _npy.asarray(X_np, dtype=_npy.float64)
-            circuit = self._get_circuit(X_np)
-            res = circuit(self.weights, X_np)
-            return self.alpha * res + self.bias
+        def _variational_classifier(self, Xnp):
+            Xnp = npy.asarray(Xnp, dtype=npy.float64)
+            circuit = self._get_circuit(Xnp)
+            if Xnp.ndim <= 1:
+                res = circuit(self.weights, Xnp)
+            else:
+                res = npy.array([circuit(self.weights, row) for row in Xnp], dtype=npy.float64)
+            return self.score_sign * (self.alpha * res + self.bias)
 
         def decision_function(self, X):
             Xn = self._to_numpy(X)
-            return _np.array(self._variational_classifier(Xn))
+            return np.array(self._variational_classifier(Xn))
 
         def predict(self, X):
             scores = self.decision_function(X)
-            return _npy.sign(_npy.asarray(scores))
+            scores_np = npy.asarray(scores, dtype=float)
+            return npy.where(scores_np >= float(self.threshold), 1.0, -1.0)
 
     return LoadedQuantumClassifier()
-
-

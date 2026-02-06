@@ -5,7 +5,15 @@ import sys
 import datetime as _dt
 from typing import Any, Dict, List, Optional, Tuple
 
-import wandb
+if __package__ in (None, ""):
+    _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+
+try:
+    import wandb
+except Exception:
+    wandb = None  # type: ignore[assignment]
 
 from scripts.core.builders import (
     Recipe,
@@ -112,6 +120,9 @@ WANDB_BASE_URL = "https://wandb.balbino.io"
 os.environ.setdefault("WANDB_BASE_URL", WANDB_BASE_URL)
 os.environ.setdefault("WANDB_HOST", WANDB_BASE_URL)
 os.environ.setdefault("WANDB_API_HOST", WANDB_BASE_URL)
+os.environ.setdefault("EDGE_BATCH_FORWARD_IMPL", "scan")
+os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS", "1")
+os.environ.setdefault("EDGE_ENFORCE_NO_PY_CALLBACK", "0")
 _WANDB_SESSION_GROUP = f"edgeiiot-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
 _WANDB_LOGIN_OK: Optional[bool] = None
 
@@ -230,9 +241,10 @@ def build_recipe(sample: int,
     r = Recipe() | csv(EDGE_DATASET, sample_size=sample) | select(feats, label=EDGE_LABEL)
     r = r | quantile_uniform()
     r = r | pls_to_pow2(components=8)
+    dev_name = os.environ.get("QML_DEVICE", "lightning.qubit")
     r = (
         r
-        | device("lightning.qubit", wires_from_features=True)
+        | device(dev_name, wires_from_features=True)
         | encoder(enc_name, **enc_opts)
         | ansatz(anz_name, layers=layers)
         | train(**tp)
@@ -291,6 +303,8 @@ def _resolved_envs() -> Dict[str, str]:
 
 
 def _wandb_ensure_login(force: bool = False) -> None:
+    if wandb is None:
+        raise RuntimeError("wandb is not installed in this environment.")
     global _WANDB_LOGIN_OK
     if not force and _WANDB_LOGIN_OK:
         return
@@ -331,7 +345,7 @@ def run_one(sample: int,
             train_params: Optional[Dict[str, Any]] = None,
             use_current_wandb_run: bool = False) -> Dict[str, Any]:
     measurement_cfg = MeasurementCfg(
-        name=meas.get("name", "mean_z"),
+        name=meas.get("name", "z0"),
         wires=[int(w) for w in meas.get("wires", [])],
     )
     active_features = _active_features()
@@ -355,7 +369,7 @@ def run_one(sample: int,
         measurement=measurement_cfg,
         data=DataCfg(path=EDGE_DATASET, features=active_features, sample=sample),
         train=TrainCfg(lr=float(tp["lr"]), batch=int(tp["batch"]), epochs=int(tp["epochs"]), seed=int(tp["seed"]), class_weights=str(tp["class_weights"])),
-        meta={"device": "lightning.qubit", "env": _resolved_envs()},
+        meta={"device": os.environ.get("QML_DEVICE", "lightning.qubit"), "env": _resolved_envs()},
     )
     spec_dict = spec.to_dict()
     phase = os.environ.get("EDGE_PHASE", "").strip() or "unspecified"
@@ -524,23 +538,23 @@ def _benchmark_worker(payload: Tuple[int, int, str, Dict[str, Any], str, Dict[st
 
 
 def main() -> None:
-    # Objective presets: minimal, expressive, and amplitude baselines
-    # - angle_embedding_y with 0..pi scaling (no reupload)
-    # - angle_pair_xy (paired RX/RY) with unit scaling
-    # - amplitude_embedding (auto PCA to power-of-two handled in build_recipe)
+    # Compiled-safe benchmark defaults.
+    # Note: amplitude_embedding currently triggers Catalyst AD failure in compiled mode.
     encoders: List[Tuple[str, Dict[str, Any]]] = [
         ("angle_embedding_y", {"angle_range": "0_pi", "reupload": False}),
         ("angle_pair_xy", {"angle_scale": 1.0}),
-        ("amplitude_embedding", {}),
     ]
+    if os.environ.get("EDGE_INCLUDE_AMPLITUDE", "0") == "1":
+        encoders.append(("amplitude_embedding", {}))
 
-    # Measurement across all available wires
+    # Mean-Z readout across active wires.
     feats = _active_features()
-    meas_wires = list(range(len(feats))) if len(feats) > 0 else [0]
-    measurement: Dict[str, Any] = {"name": "mean_z", "wires": meas_wires}
+    measurement: Dict[str, Any] = {"name": "mean_z", "wires": list(range(len(feats)))} if feats else {"name": "z0", "wires": [0]}
 
     # Grid of ansatz/layers, overridable via env lists
-    anz_list = _env_list_str("EDGE_ANZ_LIST", ["ring_rot_cnot", "strongly_entangling"]) or [os.environ.get("EDGE_ANZ", "ring_rot_cnot")]
+    anz_list = _env_list_str("EDGE_ANZ_LIST", ["ring_rot_cnot", "strongly_entangling"]) or [
+        os.environ.get("EDGE_ANZ", "ring_rot_cnot")
+    ]
     layers_list = _env_list_int("EDGE_LAYERS_LIST", [3, 4, 5])
 
     sample = _env_int("EDGE_SAMPLE", 60000)
@@ -760,7 +774,7 @@ def _sweep_train() -> None:
     except Exception:
         pass
     feats = _active_features()
-    meas = {"name": "mean_z", "wires": list(range(len(feats)))} if feats else {"name": "mean_z", "wires": [0]}
+    meas = {"name": "mean_z", "wires": list(range(len(feats)))} if feats else {"name": "z0", "wires": [0]}
     enc_opts = _enc_opts_from_cfg(cfg)
     # Allow env overrides for test_size/stratify to control exact train/test split
     env_test_size = os.environ.get("EDGE_TEST_SIZE")

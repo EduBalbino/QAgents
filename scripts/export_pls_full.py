@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import numpy as np
 import pandas as pd
@@ -48,14 +49,29 @@ def main() -> None:
     # Coerce to numeric like training
     X = coerce_numeric(X)
 
-    # Binary label {0,1}
+    # Binary label {0,1} with deterministic semantics.
     if not pd.api.types.is_numeric_dtype(y):
-        codes, uniques = pd.factorize(y.astype(str))
-        if len(uniques) == 2:
-            y01 = pd.Series(codes, index=y.index)
+        y_str = y.astype(str).str.strip()
+        uniq = sorted(set(y_str.tolist()))
+        if len(uniq) == 2:
+            pos = None
+            env_pos = os.environ.get("EDGE_POSITIVE_LABEL")
+            if env_pos is not None and str(env_pos).strip() in uniq:
+                pos = str(env_pos).strip()
+            if pos is None:
+                lower_map = {u.lower(): u for u in uniq}
+                pos_tokens = ("attack", "malicious", "anomaly", "intrusion", "true", "yes", "positive")
+                neg_tokens = ("benign", "normal", "false", "no", "negative")
+                pos_guess = next((lower_map[t] for t in pos_tokens if t in lower_map), None)
+                neg_guess = next((lower_map[t] for t in neg_tokens if t in lower_map), None)
+                if pos_guess is not None and neg_guess is not None and pos_guess != neg_guess:
+                    pos = pos_guess
+            if pos is None:
+                pos = uniq[-1]
+            y01 = (y_str == pos).astype(int)
         else:
-            y0 = codes[0] if len(codes) > 0 else 0
-            y01 = pd.Series((codes != y0).astype(int), index=y.index)
+            lo = uniq[0] if uniq else ""
+            y01 = (y_str != lo).astype(int)
     else:
         y01 = (pd.to_numeric(y, errors="coerce").fillna(0) > 0).astype(int)
 
@@ -83,7 +99,10 @@ def main() -> None:
     out_df = pd.DataFrame(X_scaled, columns=feat_cols)
     out_df[args.label] = y01.values
     out_df.to_csv(args.out, index=False)
-    print(f"Wrote {args.out} with {len(out_df)} rows and {len(out_df.columns)} columns.")
+    print(
+        f"Wrote {args.out} with {len(out_df)} rows and {len(out_df.columns)} columns. "
+        "Note: this export fits supervised PLS on full data and is not a leakage-safe evaluation split."
+    )
 
 
 if __name__ == "__main__":
