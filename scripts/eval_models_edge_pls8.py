@@ -80,13 +80,23 @@ def parse_args() -> argparse.Namespace:
 
 def _coerce_binary_label(y: pd.Series) -> np.ndarray:
     if not pd.api.types.is_numeric_dtype(y):
-        codes, uniques = pd.factorize(y.astype(str))
-        if len(uniques) == 2:
-            y01 = codes
-        else:
-            y0 = codes[0] if len(codes) > 0 else 0
-            y01 = (codes != y0).astype(int)
-        return np.asarray(y01, dtype=int)
+        y_str = y.astype(str).str.strip()
+        uniq = sorted(set(y_str.tolist()))
+        if len(uniq) == 2:
+            env_pos = os.environ.get("EDGE_POSITIVE_LABEL")
+            if env_pos is not None and str(env_pos).strip() in uniq:
+                pos = str(env_pos).strip()
+                return np.asarray((y_str == pos).astype(int), dtype=int)
+            lower_map = {u.lower(): u for u in uniq}
+            pos_tokens = ("attack", "malicious", "anomaly", "intrusion", "true", "yes", "positive")
+            neg_tokens = ("benign", "normal", "false", "no", "negative")
+            pos = next((lower_map[t] for t in pos_tokens if t in lower_map), None)
+            neg = next((lower_map[t] for t in neg_tokens if t in lower_map), None)
+            if pos is not None and neg is not None and pos != neg:
+                return np.asarray((y_str == pos).astype(int), dtype=int)
+            return np.asarray((y_str == uniq[-1]).astype(int), dtype=int)
+        lo = uniq[0] if uniq else ""
+        return np.asarray((y_str != lo).astype(int), dtype=int)
     return (pd.to_numeric(y, errors="coerce").fillna(0) > 0).astype(int).values
 
 
@@ -95,7 +105,8 @@ def _select_rows(df: pd.DataFrame, limit: int, sample: int, seed: int) -> pd.Dat
         n = min(sample, len(df))
         return df.sample(n=n, random_state=seed)
     if limit and limit > 0:
-        return df.head(limit)
+        n = min(limit, len(df))
+        return df.sample(n=n, random_state=seed)
     return df
 
 
@@ -199,9 +210,9 @@ def _eval_one(
         df_in = df.drop(columns=[label_col])
 
     y_true = _coerce_binary_label(df[label_col])
-    preds = np.asarray(clf.predict(df_in)).astype(float)
-    y_pred = (preds > 0).astype(int)
     scores = np.asarray(clf.decision_function(df_in)).astype(float)
+    threshold = float(getattr(clf, "threshold", 0.0))
+    y_pred = (scores >= threshold).astype(int)
     auc = _safe_auc(y_true, scores)
     auc_inv = _safe_auc(y_true, -scores) if auc is not None else None
 
@@ -281,7 +292,7 @@ def main() -> None:
     if not os.path.exists(args.csv):
         raise SystemExit(f"CSV not found: {args.csv}")
 
-    df = pd.read_csv(args.csv)
+    df = pd.read_csv(args.csv, low_memory=False)
     df = _select_rows(df, args.limit, args.sample, args.seed)
     y_all = _coerce_binary_label(df[args.label])
     stats = _dataset_stats(y_all)

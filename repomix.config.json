@@ -33,17 +33,9 @@
     "scripts/specs.py",
     "scripts/core/__init__.py",
     "scripts/core/builders.py",
-    "scripts/core/jax_preprocess.py",
-    "scripts/core/jax_train.py",
-    "scripts/train_edge_pls8_binary.py",
-    "scripts/QML_ML-EdgeIIoT-Binario.py",
-    "scripts/QML_ML-EdgeIIoT-benchmark.py",
-    "scripts/predict.py",
-    "scripts/eval_models_edge_pls8.py",
-    "scripts/export_pls_full.py",
-    "scripts/inspect_data.py",
-    "scripts/merge_datasets.py",
-    "scripts/debug_imports.py"
+    "scripts/core/compiler.py",
+    "scripts/core/compiled_core.py",
+    "scripts/train_edge_pls8_binary.py"
   ],
   "ignore": {
     "useGitignore": true,

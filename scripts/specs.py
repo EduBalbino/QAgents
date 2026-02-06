@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 ALLOWED_ENCODERS = {"angle_embedding_y", "angle_pair_xy", "amplitude_embedding"}
 ALLOWED_ANZ = {"ring_rot_cnot", "strongly_entangling"}
-ALLOWED_MEASUREMENTS = {"mean_z"}
+ALLOWED_MEASUREMENTS = {"mean_z", "z0"}
 
 
 @dataclass(frozen=True)
