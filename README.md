@@ -31,3 +31,20 @@ Environment setup with uv
   - Explore sweep: `WANDB_DISABLED=1 EDGE_PHASE=explore EDGE_SWEEP_SAMPLE=120000 EDGE_TEST_SIZE=0.1666667 EDGE_STRATIFY=1 EDGE_EXPLORE_COUNT=8 EDGE_EXPAND_COUNT=0 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
   - Grid: `WANDB_DISABLED=1 EDGE_MODE=grid uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
   - RF baseline: `WANDB_DISABLED=1 EDGE_MODE=rf EDGE_STRATIFY=1 uv run python -m scripts.QML_ML-EdgeIIoT-benchmark`
+
+Merged multi-dataset prep (grouped + binary)
+- Build merged datasets from all CSVs in `data/Datasets`:
+  - `uv run python scripts/prepare_merged_iot_datasets.py --overwrite`
+- Outputs:
+  - `data/processed/edge_iot_merged_grouped.csv` (includes `label_group` + `Attack_label`)
+  - `data/processed/edge_iot_merged_binary.csv` (binary-ready with `Attack_label`)
+  - `data/processed/reports/merge_summary.json`
+  - `data/processed/reports/merge_summary.md`
+- Mapping config:
+  - `configs/label_group_map_edge_iot.json` (exact + regex rules, fallback to `Others`)
+
+Using merged binary dataset with benchmark
+- Benchmark currently reads `EDGE_DATASET` and `EDGE_LABEL` constants in `scripts/QML_ML-EdgeIIoT-benchmark.py`.
+- To train on merged binary output, set:
+  - `EDGE_DATASET = "data/processed/edge_iot_merged_binary.csv"`
+  - `EDGE_LABEL = "Attack_label"`

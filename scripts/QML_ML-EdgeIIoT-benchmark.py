@@ -10,12 +10,17 @@ if __package__ in (None, ""):
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
 
-# Thread limits — must be set before numpy/jax/catalyst are imported.
-# Keeps each process lean so multiple W&B agents can run in parallel.
-_EDGE_THREADS = os.environ.get("EDGE_THREADS", "2")
-for _k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
-    os.environ.setdefault(_k, _EDGE_THREADS)
+# By default, do not force BLAS/OpenMP thread caps. This prevents stale
+# shell-exported limits (e.g., OMP_NUM_THREADS=2) from throttling sweeps.
+if os.environ.get("EDGE_USE_ALL_THREADS", "1") != "0":
+    for _k in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ.pop(_k, None)
 
 try:
     import wandb
@@ -67,7 +72,7 @@ def objective(m: Dict[str, float]) -> float:
     return float(out)
 
 
-EDGE_DATASET = "data/ML-EdgeIIoT-dataset-binario.csv"
+EDGE_DATASET = os.environ.get("EDGE_DATASET", "data/ML-EdgeIIoT-dataset-binario.csv")
 # Columns come from QML_ML-EdgeIIoT-Binario.py
 EDGE_FEATURES = [
     'ip.src_host',
@@ -131,7 +136,7 @@ EDGE_FEATURES = [
     'mbtcp.trans_id',
     'mbtcp.unit_id',
 ]
-EDGE_LABEL = 'Attack_label'
+EDGE_LABEL = os.environ.get("EDGE_LABEL", "Attack_label")
 
 WANDB_BASE_URL = "https://wandb.balbino.io"
 os.environ.setdefault("WANDB_BASE_URL", WANDB_BASE_URL)
@@ -140,6 +145,7 @@ os.environ.setdefault("WANDB_API_HOST", WANDB_BASE_URL)
 os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS", "1")
 os.environ.setdefault("EDGE_ENFORCE_NO_PY_CALLBACK", "0")
 os.environ.setdefault("EDGE_PREFLIGHT_COMPILE", "1")
+os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS_CHUNK", "5")
 # Reuse preprocessing artifact across sweep runs by default.
 os.environ.setdefault("EDGE_PREPROCESS_ARTIFACT", os.path.join(_ROOT, "cache", "edgeiiot-preprocess"))
 # CPU only: force a CPU-backed Lightning simulator.
@@ -148,7 +154,7 @@ _WANDB_SESSION_GROUP = f"edgeiiot-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}
 _WANDB_LOGIN_OK: Optional[bool] = None
 
 # Default training / sweep hyperparameters (overridable via env or W&B sweeps)
-EDGE_FIXED_EPOCHS = 2
+EDGE_FIXED_EPOCHS = 4
 EDGE_DEFAULT_SAMPLE = 120000
 EDGE_DEFAULT_LR = 0.1
 EDGE_DEFAULT_BATCH = 64
@@ -165,9 +171,9 @@ os.environ.setdefault("EDGE_PREPROCESS_SPLIT_SEED", str(EDGE_DEFAULT_SEED))
 # stay comparable across time and compilation caching stays stable.
 
 PHASE_A_SAMPLE = 120000
-PHASE_A_EPOCHS = 2
-PHASE_A_SEEDS = [42, 1337]
-PHASE_A_LR_VALUES = [0.01, 0.04, 0.07, 0.10]
+PHASE_A_EPOCHS = 100
+PHASE_A_SEEDS = [42, 1337, 2024]
+PHASE_A_LR_VALUES = [0.01]
 
 PHASE_A_ENC_NAMES = [
     "angle_embedding_y",
@@ -178,16 +184,12 @@ PHASE_A_ENC_NAMES = [
 # - range_0_pi -> angle_range=0_pi
 # - scale_X    -> angle_scale=float(X)
 PHASE_A_ANGLE_MODES = [
-    "range_0_pi",
     "scale_0.5",
-    "scale_1.0",
-    "scale_2.0",
-    "scale_3.14159",
 ]
 
 PHASE_A_MEASUREMENTS = ["z0"]
-PHASE_A_LAYERS_RING = [1, 2, 3, 4, 5]
-PHASE_A_LAYERS_STRONGLY_ENTANGLING = [1, 2, 3]
+PHASE_A_LAYERS_RING = [3]
+PHASE_A_LAYERS_STRONGLY_ENTANGLING = [3]
 
 PHASE_A_RING_COUNT_DEFAULT = 80
 PHASE_A_STRONG_COUNT_DEFAULT = 60
@@ -602,8 +604,8 @@ def _benchmark_worker(payload: Tuple[int, int, str, Dict[str, Any], str, Dict[st
 def main() -> None:
     # Compiled-safe benchmark defaults.
     encoders: List[Tuple[str, Dict[str, Any]]] = [
-        ("angle_embedding_y", {"angle_range": "0_pi", "reupload": False}),
-        ("angle_pair_xy", {"angle_scale": 1.0}),
+        ("angle_embedding_y", {"angle_scale": 0.5, "reupload": True}),
+        ("angle_pair_xy", {"angle_scale": 0.5, "reupload": True}),
     ]
 
     # Mean-Z readout across active wires.
@@ -611,10 +613,10 @@ def main() -> None:
     measurement: Dict[str, Any] = {"name": "z0", "wires": [0]}
 
     # Grid of ansatz/layers, overridable via env lists
-    anz_list = _env_list_str("EDGE_ANZ_LIST", ["ring_rot_cnot", "strongly_entangling"]) or [
+    anz_list = _env_list_str("EDGE_ANZ_LIST", ["ring_rot_cnot"]) or [
         os.environ.get("EDGE_ANZ", "ring_rot_cnot")
     ]
-    layers_list = _env_list_int("EDGE_LAYERS_LIST", [3, 4, 5])
+    layers_list = _env_list_int("EDGE_LAYERS_LIST", [3])
 
     sample = _env_int("EDGE_SAMPLE", 60000)
     seed = _env_int("EDGE_SEED", 42)
@@ -773,13 +775,8 @@ def _sweep_main() -> None:
 
 
 def _build_phase_a_sweep_config(*, ansatz_name: str) -> Dict[str, Any]:
-    if ansatz_name not in ("ring_rot_cnot", "strongly_entangling"):
+    if ansatz_name != "ring_rot_cnot":
         raise ValueError(f"Unsupported Phase A ansatz: {ansatz_name}")
-    layers = (
-        PHASE_A_LAYERS_RING
-        if ansatz_name == "ring_rot_cnot"
-        else PHASE_A_LAYERS_STRONGLY_ENTANGLING
-    )
     return {
         "name": f"edgeiiot-phase-a-{ansatz_name}-sample{PHASE_A_SAMPLE}-b{EDGE_DEFAULT_BATCH}-e{PHASE_A_EPOCHS}",
         "method": "random",
@@ -790,12 +787,12 @@ def _build_phase_a_sweep_config(*, ansatz_name: str) -> Dict[str, Any]:
             "phase": {"value": "phase_a"},
             "sample": {"value": PHASE_A_SAMPLE},
             "enc_name": {"values": PHASE_A_ENC_NAMES},
-            "angle_mode": {"values": PHASE_A_ANGLE_MODES},
-            "hadamard": {"values": [True, False]},
-            "reupload": {"values": [True, False]},
+            "angle_mode": {"value": "scale_0.5"},
+            "hadamard": {"value": True},
+            "reupload": {"value": True},
             "anz_name": {"value": ansatz_name},
             "measurement": {"values": PHASE_A_MEASUREMENTS},
-            "layers": {"values": layers},
+            "layers": {"value": 3},
             "lr": {"values": PHASE_A_LR_VALUES},
             "epochs": {"value": PHASE_A_EPOCHS},
             "seed": {"values": PHASE_A_SEEDS},
@@ -871,7 +868,6 @@ def _run_sweeps_autorun() -> None:
         return
     # Legacy entrypoint. Kept minimal: defaults to Phase A sweeps.
     explore_count = _env_int("EDGE_EXPLORE_COUNT", PHASE_A_RING_COUNT_DEFAULT)
-    expand_count = _env_int("EDGE_EXPAND_COUNT", PHASE_A_STRONG_COUNT_DEFAULT)
     project = _wandb_project()
     entity = _wandb_entity()
     try:
@@ -881,8 +877,6 @@ def _run_sweeps_autorun() -> None:
         return
     explore_id = _create_sweep("ring_rot_cnot", project, entity)
     wandb.agent(explore_id, function=_sweep_train, count=explore_count)
-    expand_id = _create_sweep("strongly_entangling", project, entity)
-    wandb.agent(expand_id, function=_sweep_train, count=expand_count)
 
 
 def run_rf_baseline(sample: int = 60000, seed: int = 42, n_estimators: int = 200, class_weight: str = "balanced", stratify: bool = True, test_size: float = 0.2) -> Dict[str, Any]:
@@ -923,21 +917,16 @@ if __name__ == "__main__":
     mode = os.environ.get("EDGE_MODE", "").lower()
     if len(sys.argv) > 1 and sys.argv[1] == "--sweep":
         _sweep_train()
-    elif len(sys.argv) > 1 and sys.argv[1] in ("--phase-a-ring", "--phase-a-strong"):
+    elif len(sys.argv) > 1 and sys.argv[1] == "--phase-a-ring":
         if _wandb_disabled():
             print("[ERROR] Phase A sweeps require W&B. Unset WANDB_DISABLED.")
             raise SystemExit(2)
         _wandb_ensure_login()
         project = _wandb_project()
         entity = _wandb_entity()
-        if sys.argv[1] == "--phase-a-ring":
-            sweep_id = _create_sweep("ring_rot_cnot", project, entity)
-            print(f"[W&B] Sweep id: {sweep_id}")
-            raise SystemExit(0)
-        else:
-            sweep_id = _create_sweep("strongly_entangling", project, entity)
-            print(f"[W&B] Sweep id: {sweep_id}")
-            raise SystemExit(0)
+        sweep_id = _create_sweep("ring_rot_cnot", project, entity)
+        print(f"[W&B] Sweep id: {sweep_id}")
+        raise SystemExit(0)
     elif mode == "grid":
         main()
     elif mode == "rf":

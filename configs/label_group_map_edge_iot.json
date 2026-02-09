@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "others_label": "Others",
+  "benign_label": "Benign",
+  "exact_map": {
+    "benign traffic": "Benign",
+    "benign": "Benign",
+    "mitm": "MITM_Spoofing",
+    "mitm arp spoofing": "MITM_Spoofing",
+    "backdoor": "Malware_Ransomware_Backdoor",
+    "ransomware": "Malware_Ransomware_Backdoor",
+    "xss": "Web_App_Attack",
+    "sql injection": "Web_App_Attack",
+    "uploading attack": "Web_App_Attack",
+    "password attack": "BruteForce_Credential",
+    "dictionary brute force": "BruteForce_Credential",
+    "telnet brute force": "BruteForce_Credential",
+    "sparta ssh brute force": "BruteForce_Credential",
+    "mqtt brute force": "BruteForce_Credential",
+    "os fingerprinting": "Recon_Scan",
+    "recon host discovery": "Recon_Scan",
+    "recon os scan": "Recon_Scan",
+    "recon ping sweep": "Recon_Scan",
+    "recon port scan": "Recon_Scan",
+    "recon vulnerability scan": "Recon_Scan",
+    "port scanning": "Recon_Scan",
+    "vulnerability scanner": "Recon_Scan",
+    "scan host port": "Recon_Scan",
+    "scan port os": "Recon_Scan",
+    "dos tcp flood": "DoS_DDoS_Flood",
+    "dos syn flood": "DoS_DDoS_Flood",
+    "dos dns flood": "DoS_DDoS_Flood",
+    "dos icmp flood": "DoS_DDoS_Flood",
+    "dos udp flood": "DoS_DDoS_Flood",
+    "ddos tcp syn flood": "DoS_DDoS_Flood",
+    "ddos http flood": "DoS_DDoS_Flood",
+    "ddos ack fragmentation": "DoS_DDoS_Flood",
+    "ddos icmp fragmentation": "DoS_DDoS_Flood",
+    "ddos pshack flood": "DoS_DDoS_Flood",
+    "ddos rstfinflood": "DoS_DDoS_Flood",
+    "mirai ack flood": "DoS_DDoS_Flood",
+    "mirai udp flood": "DoS_DDoS_Flood",
+    "mirai udpplain": "DoS_DDoS_Flood",
+    "mirai http flood": "DoS_DDoS_Flood",
+    "mqtt ddos connect flood": "Protocol_Abuse_MQTT",
+    "mqtt dos connect flood": "Protocol_Abuse_MQTT",
+    "mqtt dos publish flood": "Protocol_Abuse_MQTT",
+    "mqtt malformed": "Protocol_Abuse_MQTT"
+  },
+  "regex_rules": [
+    {
+      "pattern": "\\bbenign\\b",
+      "group": "Benign"
+    },
+    {
+      "pattern": "\\b(mitm|arp spoof)\\b",
+      "group": "MITM_Spoofing"
+    },
+    {
+      "pattern": "\\b(backdoor|ransomware|mirai|malware)\\b",
+      "group": "Malware_Ransomware_Backdoor"
+    },
+    {
+      "pattern": "\\b(sql\\s*injection|xss|upload)\\b",
+      "group": "Web_App_Attack"
+    },
+    {
+      "pattern": "\\b(brute\\s*force|password attack|dictionary|telnet|ssh)\\b",
+      "group": "BruteForce_Credential"
+    },
+    {
+      "pattern": "\\b(recon|scan|fingerprinting|vulnerability scanner|port scanning)\\b",
+      "group": "Recon_Scan"
+    },
+    {
+      "pattern": "\\bmqtt\\b",
+      "group": "Protocol_Abuse_MQTT"
+    },
+    {
+      "pattern": "\\b(dos|ddos|flood|fragmentation)\\b",
+      "group": "DoS_DDoS_Flood"
+    }
+  ]
+}

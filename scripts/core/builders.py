@@ -1018,6 +1018,22 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         and epochs > 1
         and os.environ.get("EDGE_CPU_FUSE_EPOCHS", "1") != "0"
     )
+    fuse_chunk_epochs = 0
+    try:
+        fuse_chunk_epochs = int(os.environ.get("EDGE_CPU_FUSE_EPOCHS_CHUNK", "0") or 0)
+    except Exception:
+        fuse_chunk_epochs = 0
+    if cpu_fuse_epochs and fuse_chunk_epochs > 0:
+        fused_epochs_per_call = max(1, min(epochs, fuse_chunk_epochs))
+    else:
+        fused_epochs_per_call = epochs
+    if cpu_fuse_epochs and fused_epochs_per_call > 1 and (epochs % fused_epochs_per_call) != 0:
+        print(
+            f"[WARN] EDGE_CPU_FUSE_EPOCHS_CHUNK={fused_epochs_per_call} does not divide epochs={epochs}; "
+            "falling back to per-epoch compile calls."
+        )
+        fused_epochs_per_call = 1
+    cpu_fuse_epochs_effective = cpu_fuse_epochs and fused_epochs_per_call > 1
     np_rng = np.random.default_rng(seed)
     val_frac = val_frac_cfg
 
@@ -1196,7 +1212,7 @@ def run(recipe: Recipe) -> Dict[str, Any]:
 
     # Compile an epoch-sized training kernel with device-side batch traversal.
     num_it = max(1, len(X_train_pool) // batch_size)
-    compile_num_batches = num_it * epochs if cpu_fuse_epochs else num_it
+    compile_num_batches = num_it * fused_epochs_per_call if cpu_fuse_epochs_effective else num_it
     lr_j = jnp.asarray(lr, dtype=backend.dtype)
     compiled = get_compiled_core(
         num_qubits,
@@ -1254,46 +1270,49 @@ def run(recipe: Recipe) -> Dict[str, Any]:
             idx_steps_all[ep] = perm[: num_it * batch_size].reshape(num_it, batch_size)
         _BATCH_INDEX_CACHE[cache_key] = idx_steps_all
 
-    if cpu_fuse_epochs:
+    if cpu_fuse_epochs_effective:
         print(
-            f"CPU fused training | epochs={epochs} | iters/epoch={num_it} | total_iters={compile_num_batches} | "
-            f"batch_size={batch_size}",
+            f"CPU fused training | epochs={epochs} | epochs_per_compile={fused_epochs_per_call} | "
+            f"iters/epoch={num_it} | batches/compile={compile_num_batches} | batch_size={batch_size}",
             flush=True,
         )
-        idx_steps_flat = idx_steps_all.reshape(compile_num_batches, batch_size)
-        X_steps_j = jnp.asarray(X_train_pool[idx_steps_flat], dtype=backend.dtype)
-        Y_steps_j = jnp.asarray(Y_train01_pool[idx_steps_flat], dtype=backend.dtype)
-        w_steps_j = jnp.asarray(w_train_pool[idx_steps_flat], dtype=backend.dtype)
-        iter_start = time.time()
-        train_state, rng_key, loss_stats = train_epoch_compiled(
-            train_state,
-            rng_key,
-            X_steps_j,
-            Y_steps_j,
-            w_steps_j,
-            lr_j,
-        )
-        loss_stats.block_until_ready()
-        iter_s = time.time() - iter_start
-        total_iters = compile_num_batches
-        params, _ = train_state
-        weights, bias, alpha = params
-        loss_stats_np = np.asarray(loss_stats)
-        c_mean = float(loss_stats_np[0]) if loss_stats_np.size >= 1 else float("nan")
-        c_b = float(loss_stats_np[1]) if loss_stats_np.size >= 2 else float("nan")
-        print(
-            f"CPU fused done | mean_loss={c_mean:0.7f} | last_loss={c_b:0.7f} | Time: {iter_s:.2f}s",
-            flush=True,
-        )
-        _log_train_metrics_to_wandb(
-            epoch=epochs,
-            iter_in_epoch=num_it,
-            total_iters=total_iters,
-            batch_size=batch_size,
-            loss=float(c_mean),
-            acc=float("nan"),
-            start_time=start_time,
-        )
+        for ep0 in range(0, epochs, fused_epochs_per_call):
+            ep1 = min(epochs, ep0 + fused_epochs_per_call)
+            idx_steps_flat = idx_steps_all[ep0:ep1].reshape(compile_num_batches, batch_size)
+            X_steps_j = jnp.asarray(X_train_pool[idx_steps_flat], dtype=backend.dtype)
+            Y_steps_j = jnp.asarray(Y_train01_pool[idx_steps_flat], dtype=backend.dtype)
+            w_steps_j = jnp.asarray(w_train_pool[idx_steps_flat], dtype=backend.dtype)
+            iter_start = time.time()
+            train_state, rng_key, loss_stats = train_epoch_compiled(
+                train_state,
+                rng_key,
+                X_steps_j,
+                Y_steps_j,
+                w_steps_j,
+                lr_j,
+            )
+            loss_stats.block_until_ready()
+            iter_s = time.time() - iter_start
+            total_iters += compile_num_batches
+            params, _ = train_state
+            weights, bias, alpha = params
+            loss_stats_np = np.asarray(loss_stats)
+            c_mean = float(loss_stats_np[0]) if loss_stats_np.size >= 1 else float("nan")
+            c_b = float(loss_stats_np[1]) if loss_stats_np.size >= 2 else float("nan")
+            print(
+                f"CPU fused chunk done | epochs={ep0+1}-{ep1}/{epochs} | "
+                f"mean_loss={c_mean:0.7f} | last_loss={c_b:0.7f} | Time: {iter_s:.2f}s",
+                flush=True,
+            )
+            _log_train_metrics_to_wandb(
+                epoch=ep1,
+                iter_in_epoch=num_it,
+                total_iters=total_iters,
+                batch_size=batch_size,
+                loss=float(c_mean),
+                acc=float("nan"),
+                start_time=start_time,
+            )
     else:
         for ep in range(epochs):
             print(f"Epoch {ep+1}/{epochs} | iters={num_it} | batch_size={batch_size}", flush=True)
