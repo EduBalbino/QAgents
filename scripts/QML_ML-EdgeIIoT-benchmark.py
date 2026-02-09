@@ -173,7 +173,7 @@ os.environ.setdefault("EDGE_PREPROCESS_SPLIT_SEED", str(EDGE_DEFAULT_SEED))
 PHASE_A_SAMPLE = 120000
 PHASE_A_EPOCHS = 100
 PHASE_A_SEEDS = [42, 1337, 2024]
-PHASE_A_LR_VALUES = [0.01]
+PHASE_A_LR_VALUES = [0.01, 0.005]
 
 PHASE_A_ENC_NAMES = [
     "angle_embedding_y",
@@ -855,6 +855,73 @@ def _sweep_train() -> None:
     )
 
 
+def _run_phase_a_local(ansatz_name: str) -> None:
+    if ansatz_name != "ring_rot_cnot":
+        raise ValueError(f"Unsupported Phase A ansatz: {ansatz_name}")
+    feats = _active_features()
+    results: List[Dict[str, Any]] = []
+    total = (
+        len(PHASE_A_ENC_NAMES)
+        * len(PHASE_A_ANGLE_MODES)
+        * len(PHASE_A_MEASUREMENTS)
+        * len(PHASE_A_LR_VALUES)
+        * len(PHASE_A_SEEDS)
+    )
+    i = 0
+    for enc_name in PHASE_A_ENC_NAMES:
+        for angle_mode in PHASE_A_ANGLE_MODES:
+            class _Cfg:
+                pass
+            cfg = _Cfg()
+            cfg.hadamard = True
+            cfg.reupload = True
+            cfg.angle_mode = angle_mode
+            enc_opts = _enc_opts_from_cfg(cfg)
+            for meas_name in PHASE_A_MEASUREMENTS:
+                meas = (
+                    {"name": "mean_z", "wires": list(range(len(feats)))}
+                    if (meas_name == "mean_z" and feats)
+                    else {"name": "z0", "wires": [0]}
+                )
+                for lr in PHASE_A_LR_VALUES:
+                    for seed in PHASE_A_SEEDS:
+                        i += 1
+                        print(
+                            f"[PHASE-A] Run {i}/{total} | enc={enc_name} angle={angle_mode} "
+                            f"meas={meas_name} lr={lr} seed={seed}",
+                            flush=True,
+                        )
+                        res = run_one(
+                            sample=PHASE_A_SAMPLE,
+                            enc_name=enc_name,
+                            enc_opts=enc_opts,
+                            layers=3,
+                            meas=meas,
+                            anz_name=ansatz_name,
+                            seed=int(seed),
+                            train_params={
+                                "lr": float(lr),
+                                "batch": EDGE_DEFAULT_BATCH,
+                                "epochs": int(PHASE_A_EPOCHS),
+                                "class_weights": EDGE_DEFAULT_CLASS_WEIGHTS,
+                                "seed": int(seed),
+                            },
+                            use_current_wandb_run=False,
+                        )
+                        results.append(res)
+    if not results:
+        print("[PHASE-A] No runs executed.")
+        return
+    best = max(results, key=lambda r: objective(r.get("metrics", {})))
+    print(
+        "[PHASE-A] Best run | "
+        f"obj={objective(best.get('metrics', {})):.4f} "
+        f"enc={best.get('encoder', best.get('enc_name'))} "
+        f"ansatz={best.get('ansatz')} L={best.get('layers')} "
+        f"seed={best.get('seed')} spec={best.get('spec_hash')}"
+    )
+
+
 def _create_sweep(ansatz_name: str, project: str, entity: str) -> str:
     cfg = _build_phase_a_sweep_config(ansatz_name=ansatz_name)
     sid = wandb.sweep(cfg, project=project, entity=entity)
@@ -916,17 +983,9 @@ if __name__ == "__main__":
     # Default: run sweeps if W&B enabled, else grid. Set EDGE_MODE to override.
     mode = os.environ.get("EDGE_MODE", "").lower()
     if len(sys.argv) > 1 and sys.argv[1] == "--sweep":
-        _sweep_train()
+        _run_phase_a_local("ring_rot_cnot")
     elif len(sys.argv) > 1 and sys.argv[1] == "--phase-a-ring":
-        if _wandb_disabled():
-            print("[ERROR] Phase A sweeps require W&B. Unset WANDB_DISABLED.")
-            raise SystemExit(2)
-        _wandb_ensure_login()
-        project = _wandb_project()
-        entity = _wandb_entity()
-        sweep_id = _create_sweep("ring_rot_cnot", project, entity)
-        print(f"[W&B] Sweep id: {sweep_id}")
-        raise SystemExit(0)
+        _run_phase_a_local("ring_rot_cnot")
     elif mode == "grid":
         main()
     elif mode == "rf":
