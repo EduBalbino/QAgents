@@ -47,7 +47,17 @@ from scripts.specs import (
 OBJECTIVE_WEIGHTS = {"f1": 0.5, "balanced_accuracy": 0.3, "auc": 0.2}
 
 def objective(m: Dict[str, float]) -> float:
-    return sum(OBJECTIVE_WEIGHTS[k] * float(m.get(k, 0.0) or 0.0) for k in OBJECTIVE_WEIGHTS)
+    # Treat non-finite metrics as 0.0 so sweeps don't get poisoned by NaNs.
+    out = 0.0
+    for k, w in OBJECTIVE_WEIGHTS.items():
+        try:
+            v = float(m.get(k, 0.0) or 0.0)
+        except Exception:
+            v = 0.0
+        if v != v or v in (float("inf"), float("-inf")):
+            v = 0.0
+        out += float(w) * v
+    return float(out)
 
 
 EDGE_DATASET = "data/ML-EdgeIIoT-dataset-binario.csv"
@@ -120,27 +130,56 @@ WANDB_BASE_URL = "https://wandb.balbino.io"
 os.environ.setdefault("WANDB_BASE_URL", WANDB_BASE_URL)
 os.environ.setdefault("WANDB_HOST", WANDB_BASE_URL)
 os.environ.setdefault("WANDB_API_HOST", WANDB_BASE_URL)
-os.environ.setdefault("EDGE_BATCH_FORWARD_IMPL", "scan")
 os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS", "1")
 os.environ.setdefault("EDGE_ENFORCE_NO_PY_CALLBACK", "0")
+os.environ.setdefault("EDGE_PREFLIGHT_COMPILE", "1")
+# CPU only: force a CPU-backed Lightning simulator.
+os.environ["QML_DEVICE"] = "lightning.qubit"
 _WANDB_SESSION_GROUP = f"edgeiiot-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
 _WANDB_LOGIN_OK: Optional[bool] = None
 
 # Default training / sweep hyperparameters (overridable via env or W&B sweeps)
+EDGE_FIXED_EPOCHS = 4
 EDGE_DEFAULT_SAMPLE = 120000
 EDGE_DEFAULT_LR = 0.1
-EDGE_DEFAULT_BATCH = 256  # keep in sync with builders.run fixed batch size
-EDGE_DEFAULT_EPOCHS = 1
+EDGE_DEFAULT_BATCH = 64
+EDGE_DEFAULT_EPOCHS = EDGE_FIXED_EPOCHS
 EDGE_DEFAULT_CLASS_WEIGHTS = "balanced"
 EDGE_DEFAULT_SEED = 42
 
-SWEEP_DEFAULT_SAMPLE = 120000
-SWEEP_LR_VALUES = [0.01, 0.04, 0.07, 0.10]
-SWEEP_LAYERS = [4, 5, 7]
-SWEEP_EXPLORE_EPOCHS = 3
-SWEEP_EXPAND_EPOCHS = 6
-SWEEP_EXPLORE_SEEDS = [42]
-SWEEP_EXPAND_SEEDS = [42, 1337, 2024]
+# ---------------------------
+# Phase A (fixed forever)
+# ---------------------------
+# This sweep is intentionally hard-coded (no env overrides, no conditional logic) so results
+# stay comparable across time and compilation caching stays stable.
+
+PHASE_A_SAMPLE = 120000
+PHASE_A_EPOCHS = 3
+PHASE_A_SEEDS = [42, 1337]
+PHASE_A_LR_VALUES = [0.01, 0.04, 0.07, 0.10]
+
+PHASE_A_ENC_NAMES = [
+    "angle_embedding_y",
+    "angle_pair_xy",
+    "angle_pattern_xyz",
+]
+# "angle_mode" is interpreted by _enc_opts_from_cfg:
+# - range_0_pi -> angle_range=0_pi
+# - scale_X    -> angle_scale=float(X)
+PHASE_A_ANGLE_MODES = [
+    "range_0_pi",
+    "scale_0.5",
+    "scale_1.0",
+    "scale_2.0",
+    "scale_3.14159",
+]
+
+PHASE_A_MEASUREMENTS = ["mean_z", "z0"]
+PHASE_A_LAYERS_RING = [1, 2, 3, 4, 5, 6, 7]
+PHASE_A_LAYERS_STRONGLY_ENTANGLING = [1, 2, 3]
+
+PHASE_A_RING_COUNT_DEFAULT = 80
+PHASE_A_STRONG_COUNT_DEFAULT = 60
 
 EXPLORE_COUNT_DEFAULT = 8
 EXPAND_COUNT_DEFAULT = 16
@@ -205,18 +244,14 @@ def _default_train_params(seed: int) -> Dict[str, Any]:
     """
     Base training hyperparameters, with env overrides for easy tuning:
     - EDGE_LR
-    - EDGE_BATCH
-    - EDGE_EPOCHS
     - EDGE_CLASS_WEIGHTS
-    - EDGE_SEED
     """
     return {
         "lr": _env_float("EDGE_LR", EDGE_DEFAULT_LR),
-        "batch": _env_int("EDGE_BATCH", EDGE_DEFAULT_BATCH),
-        "epochs": _env_int("EDGE_EPOCHS", EDGE_DEFAULT_EPOCHS),
+        "batch": EDGE_DEFAULT_BATCH,
+        "epochs": EDGE_DEFAULT_EPOCHS,
         "class_weights": os.environ.get("EDGE_CLASS_WEIGHTS", EDGE_DEFAULT_CLASS_WEIGHTS),
-        # Allow EDGE_SEED to override the provided seed, but fall back to the argument
-        "seed": _env_int("EDGE_SEED", seed),
+        "seed": seed,
     }
 
 
@@ -451,7 +486,9 @@ def run_one(sample: int,
 
     start_time = time.time()
     summary = run(recipe)
-    train_time = time.time() - start_time
+    wall_time_s = time.time() - start_time
+    compile_time_s = float(summary.get("compile_time_s", float("nan")))
+    core_train_time_s = float(summary.get("train_time_s", float("nan")))
     try:
         metrics = summary.get("metrics", {})
         if wandb_run is not None and metrics:
@@ -461,7 +498,15 @@ def run_one(sample: int,
                 obj = objective(metrics)
                 wandb_run.log({"objective": obj})
                 wandb_run.summary.update({"objective": obj})
-                wandb_run.log({"objective_per_s": obj / max(train_time, 1e-9), "train_time_s": train_time})
+                denom = core_train_time_s if core_train_time_s == core_train_time_s else wall_time_s
+                wandb_run.log(
+                    {
+                        "objective_per_s": obj / max(float(denom), 1e-9),
+                        "time/core_train_s": core_train_time_s,
+                        "time/compile_s": compile_time_s,
+                        "time/wall_s": wall_time_s,
+                    }
+                )
             except Exception:
                 pass
         if wandb_run is not None:
@@ -471,7 +516,9 @@ def run_one(sample: int,
                 "log_path": summary.get("log_path"),
                 "seed": seed,
                 "spec_hash": spec_hash,
-                "train_time_s": train_time,
+                "time/core_train_s": core_train_time_s,
+                "time/compile_s": compile_time_s,
+                "time/wall_s": wall_time_s,
                 "compliance/ok": compliance["ok"],
                 "compliance/diff": json.dumps(compliance["diff"]),
             })
@@ -523,7 +570,9 @@ def run_one(sample: int,
         "spec": spec_dict,
         "spec_hash": spec_hash,
         "spec_flat": flatten(spec_dict),
-        "train_time_s": train_time,
+        "core_train_time_s": core_train_time_s,
+        "compile_time_s": compile_time_s,
+        "wall_time_s": wall_time_s,
     }
     return out
 
@@ -539,13 +588,10 @@ def _benchmark_worker(payload: Tuple[int, int, str, Dict[str, Any], str, Dict[st
 
 def main() -> None:
     # Compiled-safe benchmark defaults.
-    # Note: amplitude_embedding currently triggers Catalyst AD failure in compiled mode.
     encoders: List[Tuple[str, Dict[str, Any]]] = [
         ("angle_embedding_y", {"angle_range": "0_pi", "reupload": False}),
         ("angle_pair_xy", {"angle_scale": 1.0}),
     ]
-    if os.environ.get("EDGE_INCLUDE_AMPLITUDE", "0") == "1":
-        encoders.append(("amplitude_embedding", {}))
 
     # Mean-Z readout across active wires.
     feats = _active_features()
@@ -569,7 +615,7 @@ def main() -> None:
     ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_headers = [
         "SpecHash", "Encoder", "Hadamard", "Reupload", "AngleScale", "Meas", "Layers", "Ansatz",
-        "Acc", "Prec", "Rec", "F1", "BAcc", "AUC", "ValBAcc", "Thresh", "TrainTime", "Log"
+        "Acc", "Prec", "Rec", "F1", "BAcc", "AUC", "ValBAcc", "Thresh", "CompileS", "TrainS", "WallS", "Log"
     ]
 
     aggregate_name = os.environ.get("WANDB_AGGREGATE_RUN") or f"edgeiiot-benchmark-{ts}"
@@ -623,7 +669,9 @@ def main() -> None:
                     f"{res['metrics'].get('auc', float('nan')):.4f}",
                     f"{res['metrics'].get('val_balanced_accuracy', float('nan')):.4f}",
                     f"{res['metrics'].get('threshold', float('nan')):.6f}",
-                    f"{res.get('train_time_s', float('nan')):.2f}",
+                    f"{float(res.get('compile_time_s', float('nan'))):.2f}",
+                    f"{float(res.get('core_train_time_s', float('nan'))):.2f}",
+                    f"{float(res.get('wall_time_s', float('nan'))):.2f}",
                     os.path.basename(res.get("log_path", "")),
                 ]
                 if table is not None:
@@ -667,7 +715,9 @@ def main() -> None:
             f"{r['metrics'].get('auc', float('nan')):.4f}",
             f"{r['metrics'].get('val_balanced_accuracy', float('nan')):.4f}",
             f"{r['metrics'].get('threshold', float('nan')):.6f}",
-            f"{r.get('train_time_s', float('nan')):.2f}",
+            f"{float(r.get('compile_time_s', float('nan'))):.2f}",
+            f"{float(r.get('core_train_time_s', float('nan'))):.2f}",
+            f"{float(r.get('wall_time_s', float('nan'))):.2f}",
             os.path.basename(r.get("log_path", "")),
         ])
 
@@ -709,53 +759,35 @@ def _sweep_main() -> None:
     _sweep_train()
 
 
-def _build_sweep_config(phase: str) -> Dict[str, Any]:
-    is_explore = phase == "explore"
-    # Optional override for sample via env (e.g., EDGE_SWEEP_SAMPLE=120000)
-    env_sample = os.environ.get("EDGE_SWEEP_SAMPLE")
-    sample_param = (
-        {"value": int(env_sample)}
-        if env_sample
-        else {"value": SWEEP_DEFAULT_SAMPLE}
+def _build_phase_a_sweep_config(*, ansatz_name: str) -> Dict[str, Any]:
+    if ansatz_name not in ("ring_rot_cnot", "strongly_entangling"):
+        raise ValueError(f"Unsupported Phase A ansatz: {ansatz_name}")
+    layers = (
+        PHASE_A_LAYERS_RING
+        if ansatz_name == "ring_rot_cnot"
+        else PHASE_A_LAYERS_STRONGLY_ENTANGLING
     )
-    # Learning rate grid: 0.01 → 0.10 with 4 linear steps
-    lr_values = SWEEP_LR_VALUES
-    params: Dict[str, Any] = {
-        "phase": {"value": phase},
-        "sample": sample_param,
-        # Fixed encoder / ansatz choices
-        "enc_name": {"value": "angle_embedding_y"},
-        "angle_mode": {"value": "range_0_pi"},
-        "hadamard": {"value": True},
-        "reupload": {"values": [False, True]},
-        "anz_name": {"value": "strongly_entangling"},
-    }
-    if is_explore:
-        # Narrow, explicit grid for layers and lr even in explore phase
-        params["layers"] = {"values": SWEEP_LAYERS}
-        params["lr"] = {"values": lr_values}
-        # Batch size is fixed in builders.run; keep epochs/seed configurable only
-        params["epochs"] = {"value": SWEEP_EXPLORE_EPOCHS}
-        params["seed"] = {"values": SWEEP_EXPLORE_SEEDS}
-        method = "random"
-        early = {"type": "hyperband", "min_iter": 2, "s": 2}
-    else:
-        # Expand phase also uses the explicit lr grid and fixed layer set
-        params["layers"] = {"values": SWEEP_LAYERS}
-        params["lr"] = {"values": lr_values}
-        # Batch size is fixed in builders.run; keep epochs/seed configurable only
-        params["epochs"] = {"value": SWEEP_EXPAND_EPOCHS}
-        params["seed"] = {"values": SWEEP_EXPAND_SEEDS}
-        method = "bayes"
-        early = {"type": "hyperband", "min_iter": 3, "s": 2}
     return {
-        "name": f"edgeiiot-lr-layers-120k-{phase}",
-        "method": method,
+        "name": f"edgeiiot-phase-a-{ansatz_name}-sample{PHASE_A_SAMPLE}-b{EDGE_DEFAULT_BATCH}-e{PHASE_A_EPOCHS}",
+        "method": "random",
         "metric": {"name": "objective", "goal": "maximize"},
-        "parameters": params,
-        "early_terminate": early,
+        "parameters": {
+            "phase": {"value": "phase_a"},
+            "sample": {"value": PHASE_A_SAMPLE},
+            "enc_name": {"values": PHASE_A_ENC_NAMES},
+            "angle_mode": {"values": PHASE_A_ANGLE_MODES},
+            "hadamard": {"values": [True, False]},
+            "reupload": {"values": [True, False]},
+            "anz_name": {"value": ansatz_name},
+            "measurement": {"values": PHASE_A_MEASUREMENTS},
+            "layers": {"values": layers},
+            "lr": {"values": PHASE_A_LR_VALUES},
+            "epochs": {"value": PHASE_A_EPOCHS},
+            "seed": {"values": PHASE_A_SEEDS},
+        },
+        # Keep early termination conservative; Phase A runs are already short.
+        "early_terminate": {"type": "hyperband", "min_iter": 2, "s": 2},
     }
-
 
 def _sweep_train() -> None:
     if _wandb_disabled():
@@ -774,7 +806,12 @@ def _sweep_train() -> None:
     except Exception:
         pass
     feats = _active_features()
-    meas = {"name": "mean_z", "wires": list(range(len(feats)))} if feats else {"name": "z0", "wires": [0]}
+    meas_name = str(getattr(cfg, "measurement", "mean_z"))
+    meas = (
+        {"name": "mean_z", "wires": list(range(len(feats)))}
+        if (meas_name == "mean_z" and feats)
+        else {"name": "z0", "wires": [0]}
+    )
     enc_opts = _enc_opts_from_cfg(cfg)
     # Allow env overrides for test_size/stratify to control exact train/test split
     env_test_size = os.environ.get("EDGE_TEST_SIZE")
@@ -810,8 +847,9 @@ def _run_sweeps_autorun() -> None:
     if _wandb_disabled():
         print("[INFO] W&B disabled; sweeps require W&B. Use EDGE_MODE=grid instead.")
         return
-    explore_count = _env_int("EDGE_EXPLORE_COUNT", EXPLORE_COUNT_DEFAULT)
-    expand_count = _env_int("EDGE_EXPAND_COUNT", EXPAND_COUNT_DEFAULT)
+    # Legacy entrypoint. Kept minimal: defaults to Phase A sweeps.
+    explore_count = _env_int("EDGE_EXPLORE_COUNT", PHASE_A_RING_COUNT_DEFAULT)
+    expand_count = _env_int("EDGE_EXPAND_COUNT", PHASE_A_STRONG_COUNT_DEFAULT)
     project = _wandb_project()
     entity = _wandb_entity()
     try:
@@ -822,14 +860,14 @@ def _run_sweeps_autorun() -> None:
     # Create or reuse explore sweep
     explore_id = os.environ.get("EDGE_EXPLORE_SWEEP_ID")
     if not explore_id:
-        explore_cfg = _build_sweep_config("explore")
+        explore_cfg = _build_phase_a_sweep_config(ansatz_name="ring_rot_cnot")
         explore_id = wandb.sweep(explore_cfg, project=project, entity=entity)
     print(f"[W&B] Explore sweep id: {explore_id}")
     wandb.agent(explore_id, function=_sweep_train, count=explore_count)
     # Create or reuse expand sweep
     expand_id = os.environ.get("EDGE_EXPAND_SWEEP_ID")
     if not expand_id:
-        expand_cfg = _build_sweep_config("expand")
+        expand_cfg = _build_phase_a_sweep_config(ansatz_name="strongly_entangling")
         expand_id = wandb.sweep(expand_cfg, project=project, entity=entity)
     print(f"[W&B] Expand sweep id: {expand_id}")
     wandb.agent(expand_id, function=_sweep_train, count=expand_count)
@@ -873,6 +911,23 @@ if __name__ == "__main__":
     mode = os.environ.get("EDGE_MODE", "").lower()
     if len(sys.argv) > 1 and sys.argv[1] == "--sweep":
         _sweep_train()
+    elif len(sys.argv) > 1 and sys.argv[1] in ("--phase-a-ring", "--phase-a-strong"):
+        if _wandb_disabled():
+            print("[ERROR] Phase A sweeps require W&B. Unset WANDB_DISABLED.")
+            raise SystemExit(2)
+        _wandb_ensure_login()
+        project = _wandb_project()
+        entity = _wandb_entity()
+        if sys.argv[1] == "--phase-a-ring":
+            cfg = _build_phase_a_sweep_config(ansatz_name="ring_rot_cnot")
+            sweep_id = wandb.sweep(cfg, project=project, entity=entity)
+            print(f"[W&B] Phase A ring sweep id: {sweep_id}")
+            wandb.agent(sweep_id, function=_sweep_train, count=PHASE_A_RING_COUNT_DEFAULT)
+        else:
+            cfg = _build_phase_a_sweep_config(ansatz_name="strongly_entangling")
+            sweep_id = wandb.sweep(cfg, project=project, entity=entity)
+            print(f"[W&B] Phase A strong sweep id: {sweep_id}")
+            wandb.agent(sweep_id, function=_sweep_train, count=PHASE_A_STRONG_COUNT_DEFAULT)
     elif mode == "grid":
         main()
     elif mode == "rf":

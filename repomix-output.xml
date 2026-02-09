@@ -1,3 +1,1662 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files and files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: scripts/__init__.py, scripts/config.py, scripts/specs.py, scripts/core/__init__.py, scripts/core/builders.py, scripts/core/compiler.py, scripts/core/compiled_core.py, scripts/QML_ML-EdgeIIoT-benchmark.py
+- Files matching these patterns are excluded: wandb/**/*, data/**/*, logs/**/*, models/**/*, .venv/**/*, .history/**/*, __pycache__/**/*, *.pyc, *.pyo, .git/**/*, uv.lock, .cursorignore, spec-*.json, test*, pyproject.toml, requirements.txt, README.md, repomix.config.json
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+scripts/
+  core/
+    __init__.py
+    builders.py
+    compiled_core.py
+    compiler.py
+  __init__.py
+  config.py
+  QML_ML-EdgeIIoT-benchmark.py
+  specs.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="scripts/core/compiled_core.py">
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import os
+import optax
+import pennylane as qml
+import catalyst
+from catalyst import qjit
+
+
+@dataclass(frozen=True)
+class Backend:
+    device_name: str
+    dtype: Any
+    compile_opts: Dict[str, Any]
+
+
+_CORE_CACHE: Dict[tuple, Dict[str, Callable]] = {}
+
+
+def get_compiled_core(
+    num_qubits: int,
+    num_layers: int,
+    backend: Backend,
+    spec_hash: str,
+    shape_key: tuple,
+    encoder_name: str = "angle_embedding_y",
+    ansatz_name: str = "strongly_entangling",
+    measurement_name: str = "z0",
+    measurement_wires: tuple[int, ...] = (0,),
+    hadamard: bool = False,
+    reupload: bool = False,
+    num_batches: Optional[int] = None,
+    batch_size: Optional[int] = None,
+) -> Dict[str, Callable]:
+    if num_batches is None:
+        num_batches = 1
+    if batch_size is None:
+        batch_size = int(shape_key[0]) if len(shape_key) > 0 else 1
+    cache_key = (
+        num_qubits,
+        num_layers,
+        backend.device_name,
+        str(backend.dtype),
+        tuple(sorted(backend.compile_opts.items())),
+        spec_hash,
+        shape_key,
+        encoder_name,
+        ansatz_name,
+        measurement_name,
+        tuple(measurement_wires),
+        bool(hadamard),
+        bool(reupload),
+        num_batches,
+        batch_size,
+    )
+    cached = _CORE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    compiled = build_compiled_core(
+        num_qubits,
+        num_layers,
+        backend,
+        encoder_name=encoder_name,
+        ansatz_name=ansatz_name,
+        measurement_name=measurement_name,
+        measurement_wires=measurement_wires,
+        hadamard=hadamard,
+        reupload=reupload,
+        num_batches=num_batches,
+        batch_size=batch_size,
+    )
+    _CORE_CACHE[cache_key] = compiled
+    return compiled
+
+
+def build_compiled_core(
+    num_qubits: int,
+    num_layers: int,
+    backend: Backend,
+    encoder_name: str,
+    ansatz_name: str,
+    measurement_name: str,
+    measurement_wires: tuple[int, ...],
+    hadamard: bool,
+    reupload: bool,
+    num_batches: int,
+    batch_size: int,
+) -> Dict[str, Callable]:
+    dev_kwargs: Dict[str, Any] = {}
+    if backend.device_name.startswith("lightning."):
+        # lightning simulators default to complex128; complex64 is usually faster for training.
+        c_dtype_env = os.environ.get("EDGE_LIGHTNING_C_DTYPE", "complex64").strip().lower()
+        dev_kwargs["c_dtype"] = np.complex128 if c_dtype_env == "complex128" else np.complex64
+    if backend.device_name == "lightning.gpu":
+        dev_kwargs["use_async"] = os.environ.get("EDGE_LIGHTNING_ASYNC", "1") != "0"
+    dev = qml.device(backend.device_name, wires=num_qubits, **dev_kwargs)
+
+    def _rot_as_rz_ry_rz(phi, theta, omega, wire: int) -> None:
+        # qml.Rot(phi, theta, omega) decomposition in circuit order.
+        qml.RZ(phi, wires=wire)
+        qml.RY(theta, wires=wire)
+        qml.RZ(omega, wires=wire)
+
+    all_wires = tuple(range(num_qubits))
+    meas_ws = tuple(int(w) for w in measurement_wires) if measurement_wires else (0,)
+    meas_ws = tuple(w for w in meas_ws if 0 <= w < num_qubits) or all_wires
+
+    if num_qubits > 1:
+        se_ranges = tuple((l % (num_qubits - 1)) + 1 for l in range(num_layers))
+    else:
+        se_ranges = (0,) * num_layers
+
+    def _apply_encoder(x) -> None:
+        if hadamard and encoder_name != "amplitude_embedding":
+            for w in all_wires:
+                qml.Hadamard(wires=w)
+        if encoder_name == "angle_embedding_y":
+            qml.AngleEmbedding(x, wires=all_wires, rotation="Y")
+        elif encoder_name == "angle_pair_xy":
+            for i, w in enumerate(all_wires):
+                qml.RX(x[i], wires=w)
+                qml.RY(x[i], wires=w)
+        elif encoder_name == "amplitude_embedding":
+            qml.AmplitudeEmbedding(x, wires=all_wires, normalize=True)
+        else:
+            raise ValueError(f"Unsupported encoder for compiled core: {encoder_name}")
+
+    def _apply_ansatz_layer(weights, l: int) -> None:
+        if ansatz_name == "strongly_entangling":
+            for i, w in enumerate(all_wires):
+                _rot_as_rz_ry_rz(
+                    weights[..., l, i, 0],
+                    weights[..., l, i, 1],
+                    weights[..., l, i, 2],
+                    w,
+                )
+            if num_qubits > 1:
+                r = se_ranges[l]
+                for i, w in enumerate(all_wires):
+                    qml.CNOT(wires=[w, all_wires[(i + r) % num_qubits]])
+            return
+
+        if ansatz_name == "ring_rot_cnot":
+            for i, w in enumerate(all_wires):
+                _rot_as_rz_ry_rz(
+                    weights[..., l, i, 0],
+                    weights[..., l, i, 1],
+                    weights[..., l, i, 2],
+                    w,
+                )
+            if num_qubits > 1:
+                for i in range(num_qubits - 1):
+                    qml.CNOT(wires=[all_wires[i], all_wires[i + 1]])
+                qml.CNOT(wires=[all_wires[-1], all_wires[0]])
+            return
+
+        raise ValueError(f"Unsupported ansatz for compiled core: {ansatz_name}")
+
+    @qml.qnode(dev, interface="jax", diff_method="adjoint")
+    def qnode_forward(weights, x):
+        if reupload:
+            for l in range(num_layers):
+                _apply_encoder(x)
+                _apply_ansatz_layer(weights, l)
+        else:
+            _apply_encoder(x)
+            for l in range(num_layers):
+                _apply_ansatz_layer(weights, l)
+
+        if measurement_name == "z0":
+            return qml.expval(qml.PauliZ(0))
+        if measurement_name == "mean_z":
+            coeffs = [1.0 / float(len(meas_ws))] * len(meas_ws)
+            observables = [qml.PauliZ(w) for w in meas_ws]
+            return qml.expval(qml.Hamiltonian(coeffs, observables))
+        raise ValueError(f"Unsupported measurement for compiled core: {measurement_name}")
+
+    qnode_compiled = qjit(qnode_forward, **backend.compile_opts)
+
+    def _batch_logits(weights, bias, alpha, xb):
+        def _scan_body(_, x):
+            logit = jnp.asarray(alpha * qnode_forward(weights, x) + bias, dtype=backend.dtype)
+            return None, logit
+
+        _, logits = jax.lax.scan(_scan_body, None, xb)
+        return logits
+
+    def batched_forward(weights, X_batch):
+        def _scan_body(_, x):
+            return None, qnode_compiled(weights, x)
+
+        _, preds = jax.lax.scan(_scan_body, None, X_batch)
+        return preds
+
+    def bce_with_logits(logits, targets01, sample_weights):
+        logits = jnp.asarray(logits, dtype=backend.dtype)
+        y = jnp.asarray(targets01, dtype=backend.dtype)
+        sample_weights = jnp.asarray(sample_weights, dtype=backend.dtype)
+        # Numerically stable BCE with logits: softplus(logit) - y*logit
+        loss = jax.nn.softplus(logits) - y * logits
+        return jnp.mean(sample_weights * loss)
+
+    adam_tx = optax.scale_by_adam()
+
+    def init_opt_state(params):
+        return adam_tx.init(params)
+
+    def _batch_loss_map(weights, bias, alpha, xb, yb, wb):
+        xb = jnp.asarray(xb, dtype=backend.dtype)
+        yb = jnp.asarray(yb, dtype=backend.dtype)
+        wb = jnp.asarray(wb, dtype=backend.dtype)
+        logits = _batch_logits(weights, bias, alpha, xb)
+        return bce_with_logits(logits, yb, wb)
+
+    _batch_grad = catalyst.grad(_batch_loss_map, argnums=(0, 1, 2))
+
+    @qjit(**backend.compile_opts)
+    def train_epoch_compiled(train_state, key, X_steps, y01_steps, w_steps, lr_t):
+        params, opt_state = train_state
+        weights, bias, alpha = params
+        lr_t = jnp.asarray(lr_t, dtype=backend.dtype)
+
+        @catalyst.for_loop(0, num_batches, 1)
+        def _batch_loop(i, carry):
+            cur_weights, cur_bias, cur_alpha, cur_opt_state = carry
+            Xb = X_steps[i]
+            yb = y01_steps[i]
+            wb = w_steps[i]
+            grad_w, grad_b, grad_a = _batch_grad(cur_weights, cur_bias, cur_alpha, Xb, yb, wb)
+            grads = (grad_w, grad_b, grad_a)
+            params_now = (cur_weights, cur_bias, cur_alpha)
+            updates, new_opt_state = adam_tx.update(grads, cur_opt_state, params_now)
+            updates = jax.tree_util.tree_map(lambda u: -lr_t * u, updates)
+            new_weights, new_bias, new_alpha = optax.apply_updates(params_now, updates)
+            return (new_weights, new_bias, new_alpha, new_opt_state)
+
+        weights, bias, alpha, opt_state = _batch_loop(
+            (
+                weights,
+                bias,
+                alpha,
+                opt_state,
+            )
+        )
+        final_i = num_batches - 1
+        final_loss = _batch_loss_map(
+            weights, bias, alpha,
+            X_steps[final_i], y01_steps[final_i], w_steps[final_i],
+        )
+        loss_stats = jnp.asarray([final_loss, final_loss], dtype=backend.dtype)
+        return ((weights, bias, alpha), opt_state), key, loss_stats
+
+    def assert_no_python_callback_ir(
+        train_state,
+        key,
+        X_steps,
+        y01_steps,
+        w_steps,
+        lr_t,
+    ) -> None:
+        """Fail fast if compiled IR still contains Python callback boundaries."""
+        _ = train_epoch_compiled(train_state, key, X_steps, y01_steps, w_steps, lr_t)
+        mlir_txt = str(getattr(train_epoch_compiled, "mlir", ""))
+        if "xla_ffi_python" in mlir_txt or "CpuCallback" in mlir_txt:
+            raise RuntimeError("Compiled train epoch still contains Python callback boundary.")
+
+    return {
+        "batched_forward": batched_forward,
+        "init_opt_state": init_opt_state,
+        "train_epoch_compiled": train_epoch_compiled,
+        "assert_no_python_callback_ir": assert_no_python_callback_ir,
+    }
+</file>
+
+<file path="scripts/core/compiler.py">
+from __future__ import annotations
+
+from typing import Any, Tuple
+
+
+def _jax_array_types() -> Tuple[type, ...]:
+    types: Tuple[type, ...] = ()
+    try:
+        from jax import Array as _JaxArray  # type: ignore
+        types = types + (_JaxArray,)
+    except Exception:
+        pass
+    try:
+        from jaxlib.xla_extension import ArrayImpl as _ArrayImpl  # type: ignore
+        types = types + (_ArrayImpl,)
+    except Exception:
+        pass
+    return types
+
+
+def assert_jax_array(name: str, x: Any, dtype: Any) -> None:
+    types = _jax_array_types()
+    if types and not isinstance(x, types):
+        raise TypeError(f"{name} must be a JAX array, got {type(x)}")
+    if getattr(x, "dtype", None) != dtype:
+        raise TypeError(f"{name} dtype must be {dtype}, got {getattr(x, 'dtype', None)}")
+</file>
+
+<file path="scripts/__init__.py">
+# Marks 'scripts' as a package for absolute imports like 'scripts.core.builders'
+</file>
+
+<file path="scripts/config.py">
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional
+import hashlib
+import json
+
+
+@dataclass(frozen=True)
+class EncoderCfg:
+    name: str
+    hadamard: bool = False
+    reupload: bool = False
+    angle_range: Optional[str] = None
+    angle_scale: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class AnsatzCfg:
+    name: str
+    layers: int
+
+
+@dataclass(frozen=True)
+class MeasurementCfg:
+    name: str
+    wires: List[int]
+
+
+@dataclass(frozen=True)
+class DataCfg:
+    path: str
+    features: List[str]
+    sample: int
+
+
+@dataclass(frozen=True)
+class TrainCfg:
+    lr: float
+    batch: int
+    epochs: int
+    seed: int
+    class_weights: str
+
+
+@dataclass(frozen=True)
+class ExperimentSpec:
+    encoder: EncoderCfg
+    ansatz: AnsatzCfg
+    measurement: MeasurementCfg
+    data: DataCfg
+    train: TrainCfg
+    meta: Dict[str, Any] | None = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = asdict(self)
+        return payload | {"schema_version": 1}
+
+    def hash(self) -> str:
+        serialized = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(serialized.encode()).hexdigest()[:10]
+</file>
+
+<file path="scripts/core/__init__.py">
+from .builders import (
+    Recipe,
+    Step,
+    csv,
+    select,
+    device,
+    encoder,
+    ansatz,
+    train,
+    pca_to_pow2,
+    save,
+    run,
+    load_model,
+)
+</file>
+
+<file path="scripts/specs.py">
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional
+import hashlib
+import json
+import os
+import platform
+import subprocess
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+# Keep this aligned with scripts/core/compiled_core.py supported encoders.
+ALLOWED_ENCODERS = {
+    "angle_embedding_x",
+    "angle_embedding_y",
+    "angle_embedding_z",
+    "angle_pair_xy",
+    "angle_pattern_xyz",
+}
+ALLOWED_ANZ = {"ring_rot_cnot", "strongly_entangling"}
+ALLOWED_MEASUREMENTS = {"mean_z", "z0"}
+
+
+@dataclass(frozen=True)
+class EncoderCfg:
+    name: str
+    hadamard: bool = False
+    reupload: bool = False
+    angle_range: Optional[str] = None
+    angle_scale: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class AnsatzCfg:
+    name: str
+    layers: int
+
+
+@dataclass(frozen=True)
+class MeasurementCfg:
+    name: str
+    wires: List[int]
+
+
+@dataclass(frozen=True)
+class DataCfg:
+    path: str
+    features: List[str]
+    sample: int
+
+
+@dataclass(frozen=True)
+class TrainCfg:
+    lr: float
+    batch: int
+    epochs: int
+    seed: int
+    class_weights: str
+
+
+@dataclass(frozen=True)
+class ExperimentSpec:
+    schema_version: int
+    encoder: EncoderCfg
+    ansatz: AnsatzCfg
+    measurement: MeasurementCfg
+    data: DataCfg
+    train: TrainCfg
+    meta: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def hash(self) -> str:
+        payload = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(payload.encode()).hexdigest()[:10]
+
+
+class SpecValidator(BaseModel):
+    schema_version: int = Field(ge=1)
+    encoder: Dict[str, Any]
+    ansatz: Dict[str, Any]
+    measurement: Dict[str, Any]
+    data: Dict[str, Any]
+    train: Dict[str, Any]
+    meta: Dict[str, Any]
+
+    @field_validator("encoder")
+    @classmethod
+    def _encoder_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if v.get("name") not in ALLOWED_ENCODERS:
+            raise ValueError(f"encoder.name must be one of {sorted(ALLOWED_ENCODERS)}")
+        return v
+
+    @field_validator("ansatz")
+    @classmethod
+    def _ansatz_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if v.get("name") not in ALLOWED_ANZ:
+            raise ValueError(f"ansatz.name must be one of {sorted(ALLOWED_ANZ)}")
+        layers = v.get("layers")
+        if layers is None or layers < 1:
+            raise ValueError("ansatz.layers must be >= 1")
+        return v
+
+    @field_validator("measurement")
+    @classmethod
+    def _measurement_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        name = v.get("name")
+        wires = v.get("wires")
+        if name not in ALLOWED_MEASUREMENTS:
+            raise ValueError(f"measurement.name must be one of {sorted(ALLOWED_MEASUREMENTS)}")
+        if not isinstance(wires, list) or not all(isinstance(w, int) for w in wires):
+            raise ValueError("measurement.wires must be a list of integers")
+        return v
+
+    @field_validator("data")
+    @classmethod
+    def _data_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        sample = v.get("sample")
+        features = v.get("features", []) or []
+        if sample is None or sample < 1:
+            raise ValueError("data.sample must be >= 1")
+        if not isinstance(features, list) or not all(isinstance(f, str) for f in features):
+            raise ValueError("data.features must be a list of feature names")
+        if len(features) == 0:
+            raise ValueError("data.features must not be empty")
+        return v
+
+    @field_validator("train")
+    @classmethod
+    def _train_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        lr = v.get("lr")
+        batch = v.get("batch")
+        epochs = v.get("epochs")
+        if lr is None or float(lr) <= 0:
+            raise ValueError("train.lr must be > 0")
+        if batch is None or int(batch) < 1:
+            raise ValueError("train.batch must be >= 1")
+        if epochs is None or int(epochs) < 1:
+            raise ValueError("train.epochs must be >= 1")
+        return v
+
+
+def build_and_validate_spec(**kwargs: Any) -> tuple[ExperimentSpec, str]:
+    spec = ExperimentSpec(**kwargs)
+    try:
+        SpecValidator.model_validate(spec.to_dict())
+    except ValidationError as exc:
+        raise ValueError(f"Spec invalid: {exc}") from exc
+    return spec, spec.hash()
+
+
+def flatten(d: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key, value in d.items():
+        compound_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            out.update(flatten(value, compound_key))
+        else:
+            out[compound_key] = value
+            if isinstance(value, list):
+                out[f"{compound_key}__len"] = len(value)
+    return out
+
+
+def _md5(path: str, block_size: int = 1 << 20) -> Optional[str]:
+    if not path or not os.path.exists(path):
+        return None
+    digest = hashlib.md5()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(block_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def provenance(spec: ExperimentSpec) -> Dict[str, Any]:
+    data_path = spec.data.path
+    data_info: Dict[str, Any] = {
+        "path": data_path,
+        "exists": os.path.exists(data_path),
+        "sample": spec.data.sample,
+        "features": spec.data.features,
+    }
+    data_info["md5"] = _md5(data_path)
+    try:
+        data_info["size_bytes"] = os.path.getsize(data_path)
+    except OSError:
+        data_info["size_bytes"] = None
+
+    try:
+        git_rev = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        git_rev = None
+    try:
+        dirty = subprocess.call(["git", "diff", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0
+    except Exception:
+        dirty = None
+
+    return {
+        "data": data_info,
+        "code": {
+            "git_commit": git_rev,
+            "git_dirty": dirty,
+        },
+        "env": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+        },
+    }
+
+
+def compliance_from_summary(spec: ExperimentSpec, summary: Dict[str, Any]) -> Dict[str, Any]:
+    diff: Dict[str, Any] = {}
+    expected_qubits = len(spec.data.features)
+    actual_qubits = summary.get("circuit_qubits") or summary.get("num_qubits") or expected_qubits
+    if actual_qubits != expected_qubits:
+        diff["qubits_mismatch"] = {"expected": expected_qubits, "actual": actual_qubits}
+    ok = len(diff) == 0
+    return {"ok": ok, "diff": diff}
+
+
+def build_feature_manifest(spec: ExperimentSpec, summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    features = spec.data.features
+    used_features = summary.get("used_features")
+    if isinstance(used_features, dict):
+        used_set = {str(k) for k in used_features.keys()}
+    elif isinstance(used_features, list):
+        used_set = {str(f) for f in used_features}
+    else:
+        used_set = {feature for feature in features}
+    pca_map = summary.get("pca_index_map", {})
+    manifest: List[Dict[str, Any]] = []
+    for idx, feature in enumerate(features):
+        manifest.append({
+            "feature": feature,
+            "original_index": idx,
+            "selected": int(feature in used_set or str(idx) in used_set),
+            "post_pca_index": pca_map.get(idx),
+        })
+    return manifest
+
+
+__all__ = [
+    "ALLOWED_ENCODERS",
+    "ALLOWED_ANZ",
+    "ALLOWED_MEASUREMENTS",
+    "EncoderCfg",
+    "AnsatzCfg",
+    "MeasurementCfg",
+    "DataCfg",
+    "TrainCfg",
+    "ExperimentSpec",
+    "SpecValidator",
+    "build_and_validate_spec",
+    "flatten",
+    "provenance",
+    "compliance_from_summary",
+    "build_feature_manifest",
+]
+</file>
+
+<file path="scripts/QML_ML-EdgeIIoT-benchmark.py">
+import os
+import json
+import time
+import sys
+import datetime as _dt
+from typing import Any, Dict, List, Optional, Tuple
+
+if __package__ in (None, ""):
+    _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+
+try:
+    import wandb
+except Exception:
+    wandb = None  # type: ignore[assignment]
+
+from scripts.core.builders import (
+    Recipe,
+    csv,
+    select,
+    device,
+    encoder,
+    ansatz,
+    train,
+    save,
+    run,
+    rf_baseline,
+    quantile_uniform,
+    pls_to_pow2,
+)
+from scripts.specs import (
+    AnsatzCfg,
+    DataCfg,
+    EncoderCfg,
+    MeasurementCfg,
+    TrainCfg,
+    build_and_validate_spec,
+    build_feature_manifest,
+    compliance_from_summary,
+    flatten,
+    provenance,
+)
+
+
+# --- objective metric used by grid and sweeps ---
+OBJECTIVE_WEIGHTS = {"f1": 0.5, "balanced_accuracy": 0.3, "auc": 0.2}
+
+def objective(m: Dict[str, float]) -> float:
+    # Treat non-finite metrics as 0.0 so sweeps don't get poisoned by NaNs.
+    out = 0.0
+    for k, w in OBJECTIVE_WEIGHTS.items():
+        try:
+            v = float(m.get(k, 0.0) or 0.0)
+        except Exception:
+            v = 0.0
+        if v != v or v in (float("inf"), float("-inf")):
+            v = 0.0
+        out += float(w) * v
+    return float(out)
+
+
+EDGE_DATASET = "data/ML-EdgeIIoT-dataset-binario.csv"
+# Columns come from QML_ML-EdgeIIoT-Binario.py
+EDGE_FEATURES = [
+    'ip.src_host',
+    'ip.dst_host',
+    'arp.dst.proto_ipv4',
+    'arp.opcode',
+    'arp.hw.size',
+    'arp.src.proto_ipv4',
+    'icmp.checksum',
+    'icmp.seq_le',
+    'icmp.transmit_timestamp',
+    'icmp.unused',
+    'http.file_data',
+    'http.content_length',
+    'http.request.uri.query',
+    'http.request.method',
+    'http.referer',
+    'http.request.full_uri',
+    'http.request.version',
+    'http.response',
+    'http.tls_port',
+    'tcp.ack',
+    'tcp.ack_raw',
+    'tcp.checksum',
+    'tcp.connection.fin',
+    'tcp.connection.rst',
+    'tcp.connection.syn',
+    'tcp.connection.synack',
+    'tcp.dstport',
+    'tcp.flags',
+    'tcp.flags.ack',
+    'tcp.len',
+    'tcp.options',
+    'tcp.payload',
+    'tcp.seq',
+    'tcp.srcport',
+    'udp.port',
+    'udp.stream',
+    'udp.time_delta',
+    'dns.qry.name',
+    'dns.qry.name.len',
+    'dns.qry.qu',
+    'dns.qry.type',
+    'dns.retransmission',
+    'dns.retransmit_request',
+    'dns.retransmit_request_in',
+    'mqtt.conack.flags',
+    'mqtt.conflag.cleansess',
+    'mqtt.conflags',
+    'mqtt.hdrflags',
+    'mqtt.len',
+    'mqtt.msg_decoded_as',
+    'mqtt.msg',
+    'mqtt.msgtype',
+    'mqtt.proto_len',
+    'mqtt.protoname',
+    'mqtt.topic',
+    'mqtt.topic_len',
+    'mqtt.ver',
+    'mbtcp.len',
+    'mbtcp.trans_id',
+    'mbtcp.unit_id',
+]
+EDGE_LABEL = 'Attack_label'
+
+WANDB_BASE_URL = "https://wandb.balbino.io"
+os.environ.setdefault("WANDB_BASE_URL", WANDB_BASE_URL)
+os.environ.setdefault("WANDB_HOST", WANDB_BASE_URL)
+os.environ.setdefault("WANDB_API_HOST", WANDB_BASE_URL)
+os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS", "1")
+os.environ.setdefault("EDGE_ENFORCE_NO_PY_CALLBACK", "0")
+os.environ.setdefault("EDGE_PREFLIGHT_COMPILE", "1")
+# CPU only: force a CPU-backed Lightning simulator.
+os.environ["QML_DEVICE"] = "lightning.qubit"
+_WANDB_SESSION_GROUP = f"edgeiiot-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+_WANDB_LOGIN_OK: Optional[bool] = None
+
+# Default training / sweep hyperparameters (overridable via env or W&B sweeps)
+EDGE_FIXED_EPOCHS = 4
+EDGE_DEFAULT_SAMPLE = 120000
+EDGE_DEFAULT_LR = 0.1
+EDGE_DEFAULT_BATCH = 256  # keep in sync with builders.run fixed batch size
+EDGE_DEFAULT_EPOCHS = EDGE_FIXED_EPOCHS
+EDGE_DEFAULT_CLASS_WEIGHTS = "balanced"
+EDGE_DEFAULT_SEED = 42
+
+SWEEP_DEFAULT_SAMPLE = 120000
+SWEEP_LR_VALUES = [0.01, 0.04, 0.07, 0.10]
+# Include shallow circuits; depth sensitivity is often more informative than only deep variants.
+SWEEP_LAYERS = [1, 2, 3, 4, 5, 7]
+SWEEP_EXPLORE_EPOCHS = EDGE_FIXED_EPOCHS
+SWEEP_EXPAND_EPOCHS = EDGE_FIXED_EPOCHS
+# Use at least 2 seeds even in explore to reduce single-seed overfitting.
+SWEEP_EXPLORE_SEEDS = [42, 1337]
+SWEEP_EXPAND_SEEDS = [42, 1337, 2024]
+
+EXPLORE_COUNT_DEFAULT = 8
+EXPAND_COUNT_DEFAULT = 16
+
+BENCHMARK_DEFAULT_SAMPLE = 60000
+
+# Limit number of features to a feasible qubit count for simulators
+# Configurable via EDGE_NUM_FEATURES env (default 8)
+def _active_features() -> List[str]:
+    try:
+        n = int(os.environ.get("EDGE_NUM_FEATURES", "8"))
+    except Exception:
+        n = 8
+    n = max(1, min(n, len(EDGE_FEATURES)))
+    return EDGE_FEATURES[:n]
+
+
+def _fmt_bool(v: Any) -> str:
+    return "True" if bool(v) else "False"
+
+
+def _pretty_row(cols: List[str], widths: List[int]) -> str:
+    return " | ".join((str(c)).ljust(w) for c, w in zip(cols, widths))
+
+
+def _env_int(name: str, default: int) -> int:
+    v = os.environ.get(name)
+    try:
+        return int(v) if v not in (None, "", "None") else default
+    except Exception:
+        return default
+
+
+def _env_list_int(name: str, default: List[int]) -> List[int]:
+    v = os.environ.get(name)
+    if not v:
+        return default
+    try:
+        out = [int(x.strip()) for x in v.split(",") if x.strip() != ""]
+        return out if out else default
+    except Exception:
+        return default
+
+
+def _env_list_str(name: str, default: List[str]) -> List[str]:
+    v = os.environ.get(name)
+    if not v:
+        return default
+    out = [x.strip() for x in v.split(",") if x.strip() != ""]
+    return out if out else default
+
+
+def _env_float(name: str, default: float) -> float:
+    v = os.environ.get(name)
+    try:
+        return float(v) if v not in (None, "", "None") else default
+    except Exception:
+        return default
+
+
+def _default_train_params(seed: int) -> Dict[str, Any]:
+    """
+    Base training hyperparameters, with env overrides for easy tuning:
+    - EDGE_LR
+    - EDGE_BATCH
+    - EDGE_CLASS_WEIGHTS
+    - EDGE_SEED
+    """
+    return {
+        "lr": _env_float("EDGE_LR", EDGE_DEFAULT_LR),
+        # Fixed across all benchmark runs for comparability (match train_edge_pls8_binary.py).
+        "batch": EDGE_DEFAULT_BATCH,
+        # Fixed across all benchmark runs for comparability.
+        "epochs": EDGE_FIXED_EPOCHS,
+        "class_weights": os.environ.get("EDGE_CLASS_WEIGHTS", EDGE_DEFAULT_CLASS_WEIGHTS),
+        # Allow EDGE_SEED to override the provided seed, but fall back to the argument
+        "seed": _env_int("EDGE_SEED", seed),
+    }
+
+
+def build_recipe(sample: int,
+                 enc_name: str,
+                 enc_opts: Dict[str, Any],
+                 layers: int,
+                 meas: Dict[str, Any],
+                 anz_name: str,
+                 seed: int,
+                 train_params: Optional[Dict[str, Any]] = None) -> Recipe:
+    # Use all raw features; supervised PLS will reduce to 8 components
+    feats = EDGE_FEATURES
+    tp: Dict[str, Any] = _default_train_params(seed)
+    if train_params:
+        tp |= {
+            k: train_params[k]
+            for k in ("lr", "batch", "epochs", "class_weights", "seed", "test_size", "stratify")
+            if k in train_params
+        }
+    # Use train-fitted quantile mapping and supervised PLS to 8 components for QML
+    r = Recipe() | csv(EDGE_DATASET, sample_size=sample) | select(feats, label=EDGE_LABEL)
+    r = r | quantile_uniform()
+    r = r | pls_to_pow2(components=8)
+    dev_name = os.environ.get("QML_DEVICE", "lightning.qubit")
+    r = (
+        r
+        | device(dev_name, wires_from_features=True)
+        | encoder(enc_name, **enc_opts)
+        | ansatz(anz_name, layers=layers)
+        | train(**tp)
+    )
+    # Amplitude embedding receives 8 PLS components (pow2), no PCA insertion needed
+    # Insert measurement as a trailing step for builders.run to pick up
+    r.parts.append(type(r.parts[0])(kind="measurement", params=meas))
+    return r
+
+
+def _wandb_group() -> str:
+    return os.environ.get("WANDB_GROUP") or _WANDB_SESSION_GROUP
+
+
+def _wandb_project() -> str:
+    return os.environ.get("WANDB_PROJECT", "qml-edgeiiot")
+
+
+def _wandb_entity() -> Optional[str]:
+    return os.environ.get("WANDB_ENTITY") or None
+
+
+def _wandb_disabled() -> bool:
+    return os.environ.get("WANDB_DISABLED", "0").lower() in ("1", "true", "yes", "on")
+
+
+def _wandb_base_kwargs(name: str,
+                       job_type: str,
+                       tags: Optional[List[str]] = None) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "project": _wandb_project(),
+        "entity": _wandb_entity(),
+        "group": _wandb_group(),
+        "job_type": job_type,
+        "name": name,
+    }
+    if tags:
+        kwargs["tags"] = tags
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _resolved_envs() -> Dict[str, str]:
+    keys = [
+        "EDGE_NUM_FEATURES",
+        "EDGE_SAMPLE",
+        "EDGE_SEED",
+        "EDGE_ANZ",
+        "EDGE_ANZ_LIST",
+        "EDGE_LAYERS_LIST",
+        "WANDB_GROUP",
+        "WANDB_PROJECT",
+        "WANDB_ENTITY",
+    ]
+    resolved = {k: os.environ.get(k) for k in keys}
+    return {k: v for k, v in resolved.items() if v is not None}
+
+
+def _wandb_ensure_login(force: bool = False) -> None:
+    if wandb is None:
+        raise RuntimeError("wandb is not installed in this environment.")
+    global _WANDB_LOGIN_OK
+    if not force and _WANDB_LOGIN_OK:
+        return
+    api_key = os.environ.get("WANDB_API_KEY")
+    relogin = force or bool(os.environ.get("WANDB_FORCE_RELOGIN"))
+    try:
+        current_key = None
+        try:
+            current_key = wandb.Api().api_key
+        except Exception:
+            current_key = None
+
+        if current_key and not relogin and not api_key:
+            _WANDB_LOGIN_OK = True
+            return
+
+        if api_key:
+            result = wandb.login(key=api_key, host=WANDB_BASE_URL, relogin=relogin)
+        else:
+            result = wandb.login(host=WANDB_BASE_URL, relogin=relogin)
+    except Exception as exc:
+        _WANDB_LOGIN_OK = False
+        raise RuntimeError(f"Failed to authenticate with Weights & Biases at {WANDB_BASE_URL}: {exc}") from exc
+    _WANDB_LOGIN_OK = bool(result or getattr(wandb.Api(), "api_key", None))
+    if not _WANDB_LOGIN_OK:
+        raise RuntimeError(
+            f"Weights & Biases login was not detected. Run `wandb login --relogin --host={WANDB_BASE_URL}` once or set WANDB_API_KEY."
+        )
+
+
+def run_one(sample: int,
+            enc_name: str,
+            enc_opts: Dict[str, Any],
+            layers: int,
+            meas: Dict[str, Any],
+            anz_name: str,
+            seed: int,
+            train_params: Optional[Dict[str, Any]] = None,
+            use_current_wandb_run: bool = False) -> Dict[str, Any]:
+    measurement_cfg = MeasurementCfg(
+        name=meas.get("name", "z0"),
+        wires=[int(w) for w in meas.get("wires", [])],
+    )
+    active_features = _active_features()
+    tp: Dict[str, Any] = _default_train_params(seed)
+    if train_params:
+        tp |= {
+            k: train_params[k]
+            for k in ("lr", "batch", "epochs", "class_weights", "seed", "test_size", "stratify")
+            if k in train_params
+        }
+    spec, spec_hash = build_and_validate_spec(
+        schema_version=1,
+        encoder=EncoderCfg(
+            name=enc_name,
+            hadamard=bool(enc_opts.get("hadamard", False)),
+            reupload=bool(enc_opts.get("reupload", False)),
+            angle_range=enc_opts.get("angle_range"),
+            angle_scale=enc_opts.get("angle_scale"),
+        ),
+        ansatz=AnsatzCfg(name=anz_name, layers=layers),
+        measurement=measurement_cfg,
+        data=DataCfg(path=EDGE_DATASET, features=active_features, sample=sample),
+        train=TrainCfg(lr=float(tp["lr"]), batch=int(tp["batch"]), epochs=int(tp["epochs"]), seed=int(tp["seed"]), class_weights=str(tp["class_weights"])),
+        meta={"device": os.environ.get("QML_DEVICE", "lightning.qubit"), "env": _resolved_envs()},
+    )
+    spec_dict = spec.to_dict()
+    phase = os.environ.get("EDGE_PHASE", "").strip() or "unspecified"
+    short_hash = spec_hash[:6]
+    # Make reupload explicit in run naming for easier tracking
+    reupload_flag = bool(enc_opts.get("reupload", False))
+    hadamard_flag = bool(enc_opts.get("hadamard", False))
+    reup_suffix = "R" if reupload_flag else "NR"
+    run_name = f"{phase}-{enc_name}-{anz_name}-L{layers}-{reup_suffix}-s{seed}-{short_hash}"
+    tags = [
+        f"enc:{enc_name}",
+        f"anz:{anz_name}",
+        f"L:{layers}",
+        f"meas:{measurement_cfg.name}",
+        f"wires:{len(measurement_cfg.wires)}",
+        f"seed:{seed}",
+        f"reupload:{int(reupload_flag)}",
+        f"hadamard:{int(hadamard_flag)}",
+        f"spec:{spec_hash}",
+        f"phase:{phase}",
+    ]
+    wandb_kwargs = _wandb_base_kwargs(run_name, job_type="benchmark-run", tags=tags)
+    wandb_run = None
+    artifact_paths: List[str] = []
+    if _wandb_disabled():
+        wandb_run = None
+    elif use_current_wandb_run:
+        wandb_run = wandb.run
+    else:
+        try:
+            _wandb_ensure_login()
+        except RuntimeError as auth_err:
+            print(f"W&B authentication unavailable for run '{run_name}': {auth_err}")
+        else:
+            try:
+                wandb_run = wandb.init(**wandb_kwargs)
+            except Exception as init_err:
+                print(f"Failed to initialize W&B run '{run_name}': {init_err}")
+
+    if wandb_run is not None:
+        try:
+            cfg_payload = spec_dict | {"provenance": provenance(spec)}
+            wandb_run.config.update(cfg_payload, allow_val_change=True)
+            wandb_run.config.update({"spec_flat": flatten(cfg_payload)}, allow_val_change=True)
+            wandb_run.config.update({"spec_hash": spec_hash}, allow_val_change=True)
+            # Also expose encoder flags in top-level config for easier querying
+            wandb_run.config.update(
+                {
+                    "encoder_name": enc_name,
+                    "encoder_hadamard": hadamard_flag,
+                    "encoder_reupload": reupload_flag,
+                },
+                allow_val_change=True,
+            )
+            spec_artifact_path = f"spec-{spec_hash}.json"
+            with open(spec_artifact_path, "w", encoding="utf-8") as f:
+                json.dump(cfg_payload, f, indent=2)
+            artifact = wandb.Artifact(name=f"spec-{spec_hash}", type="experiment-spec")
+            artifact.add_file(spec_artifact_path)
+            wandb_run.log_artifact(artifact)
+            artifact_paths.append(spec_artifact_path)
+        except Exception as exc:
+            print(f"Failed to register spec for run '{run_name}': {exc}")
+
+    # Build base recipe (data → quantile/PLS → device/encoder/ansatz/train)
+    recipe = build_recipe(sample, enc_name, enc_opts, layers, meas, anz_name, seed, train_params=tp)
+    # Always persist trained models for this run; use spec hash for stable, unique names.
+    model_dir = os.environ.get("EDGE_MODEL_DIR", "models")
+    model_name = f"edgeiiot_{enc_name}_{anz_name}_L{layers}_s{seed}_{spec_hash}.pt"
+    model_path = os.path.join(model_dir, model_name)
+    recipe = recipe | save(model_path)
+    if wandb_run is not None:
+        try:
+            # Log the recipe structure directly to W&B without writing a local file
+            recipe_payload = [{"kind": part.kind, "params": part.params} for part in recipe.parts]
+            wandb_run.summary.update({"recipe": recipe_payload})
+        except Exception as exc:
+            print(f"Failed to persist recipe for run '{run_name}': {exc}")
+
+    start_time = time.time()
+    summary = run(recipe)
+    wall_time_s = time.time() - start_time
+    compile_time_s = float(summary.get("compile_time_s", float("nan")))
+    core_train_time_s = float(summary.get("train_time_s", float("nan")))
+    try:
+        metrics = summary.get("metrics", {})
+        if wandb_run is not None and metrics:
+            wandb_run.log({f"metrics/{k}": v for k, v in metrics.items()})
+            wandb_run.summary.update({k: v for k, v in metrics.items()})
+            try:
+                obj = objective(metrics)
+                wandb_run.log({"objective": obj})
+                wandb_run.summary.update({"objective": obj})
+                denom = core_train_time_s if core_train_time_s == core_train_time_s else wall_time_s
+                wandb_run.log(
+                    {
+                        "objective_per_s": obj / max(float(denom), 1e-9),
+                        "time/core_train_s": core_train_time_s,
+                        "time/compile_s": compile_time_s,
+                        "time/wall_s": wall_time_s,
+                    }
+                )
+            except Exception:
+                pass
+        if wandb_run is not None:
+            compliance = compliance_from_summary(spec, summary)
+            wandb_run.summary.update({
+                "dataset": summary.get("dataset"),
+                "log_path": summary.get("log_path"),
+                "seed": seed,
+                "spec_hash": spec_hash,
+                "time/core_train_s": core_train_time_s,
+                "time/compile_s": compile_time_s,
+                "time/wall_s": wall_time_s,
+                "compliance/ok": compliance["ok"],
+                "compliance/diff": json.dumps(compliance["diff"]),
+            })
+            manifest_rows = build_feature_manifest(spec, summary)
+            if manifest_rows:
+                manifest_table = wandb.Table(columns=["feature", "original_index", "selected", "post_pca_index"])
+                for row in manifest_rows:
+                    manifest_table.add_data(
+                        row["feature"],
+                        row["original_index"],
+                        row["selected"],
+                        row["post_pca_index"],
+                    )
+                wandb_run.log({"manifest/features": manifest_table})
+            log_path = summary.get("log_path")
+            if log_path and os.path.exists(log_path):
+                artifact = wandb.Artifact(name=f"logs-{spec_hash}", type="edge-logs")
+                artifact.add_file(log_path)
+                wandb_run.log_artifact(artifact)
+                artifact_paths.append(log_path)
+                try:
+                    os.remove(log_path)
+                except OSError:
+                    pass
+
+    except Exception as exc:
+        if wandb_run is not None:
+            wandb_run.summary.update({"status": "failed", "error": str(exc)})
+        raise
+    finally:
+        if wandb_run is not None and not use_current_wandb_run:
+            wandb_run.finish()
+        for path in artifact_paths:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+    out: Dict[str, Any] = {
+        **summary,
+        "enc_name": enc_name,
+        "enc_opts": enc_opts,
+        "layers": layers,
+        "measurement": meas,
+        "ansatz": summary.get("ansatz", anz_name),
+        "seed": seed,
+        "wandb_run": wandb_run.name if wandb_run is not None else run_name,
+        "spec": spec_dict,
+        "spec_hash": spec_hash,
+        "spec_flat": flatten(spec_dict),
+        "core_train_time_s": core_train_time_s,
+        "compile_time_s": compile_time_s,
+        "wall_time_s": wall_time_s,
+    }
+    return out
+
+
+def _benchmark_worker(payload: Tuple[int, int, str, Dict[str, Any], str, Dict[str, Any], int]):
+    sample, seed, enc_name, enc_opts, anz_name, meas, layers = payload
+    try:
+        return run_one(sample, enc_name, enc_opts, layers, meas, anz_name, seed)
+    except Exception as e:
+        print(f"Run failed for enc={enc_name} anz={anz_name} opts={enc_opts} meas={meas} L={layers}: {e}")
+        return None
+
+
+def main() -> None:
+    # Compiled-safe benchmark defaults.
+    encoders: List[Tuple[str, Dict[str, Any]]] = [
+        ("angle_embedding_y", {"angle_range": "0_pi", "reupload": False}),
+        ("angle_pair_xy", {"angle_scale": 1.0}),
+    ]
+
+    # Mean-Z readout across active wires.
+    feats = _active_features()
+    measurement: Dict[str, Any] = {"name": "mean_z", "wires": list(range(len(feats)))} if feats else {"name": "z0", "wires": [0]}
+
+    # Grid of ansatz/layers, overridable via env lists
+    anz_list = _env_list_str("EDGE_ANZ_LIST", ["ring_rot_cnot", "strongly_entangling"]) or [
+        os.environ.get("EDGE_ANZ", "ring_rot_cnot")
+    ]
+    layers_list = _env_list_int("EDGE_LAYERS_LIST", [3, 4, 5])
+
+    sample = _env_int("EDGE_SAMPLE", 60000)
+    seed = _env_int("EDGE_SEED", 42)
+
+    jobs: List[Tuple[int, int, str, Dict[str, Any], str, Dict[str, Any], int]] = []
+    for (enc_name, enc_opts) in encoders:
+        for anz_name in anz_list:
+            for layers in layers_list:
+                jobs.append((sample, seed, enc_name, enc_opts, anz_name, measurement, int(layers)))
+
+    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_headers = [
+        "SpecHash", "Encoder", "Hadamard", "Reupload", "AngleScale", "Meas", "Layers", "Ansatz",
+        "Acc", "Prec", "Rec", "F1", "BAcc", "AUC", "ValBAcc", "Thresh", "CompileS", "TrainS", "WallS", "Log"
+    ]
+
+    aggregate_name = os.environ.get("WANDB_AGGREGATE_RUN") or f"edgeiiot-benchmark-{ts}"
+    aggregate_tags = ["aggregate", "edgeiiot"]
+    aggregate_kwargs = _wandb_base_kwargs(aggregate_name, job_type="benchmark-aggregate", tags=aggregate_tags)
+    aggregate_run = None
+    table = None
+    if not _wandb_disabled():
+        try:
+            _wandb_ensure_login()
+            aggregate_run = wandb.init(**aggregate_kwargs)
+            table = wandb.Table(columns=run_headers)
+        except Exception as exc:
+            print(f"Failed to initialize W&B aggregate run '{aggregate_name}': {exc}")
+
+    if aggregate_run is not None:
+        aggregate_run.config.update({
+            "sample": sample,
+            "seed": seed,
+            "encoders": encoders,
+            "ansatz_list": anz_list,
+            "layers_list": layers_list,
+            "measurement": measurement,
+            "dataset": EDGE_DATASET,
+            "features": feats,
+        }, allow_val_change=True)
+
+    # Sequential execution (no multiprocessing)
+    results: List[Dict[str, Any]] = []
+    try:
+        for payload in jobs:
+            res = _benchmark_worker(payload)
+            if res is not None:
+                results.append(res)
+                enc_opts = res.get("encoder_opts", res.get("enc_opts", {}))
+                meas = res.get("measurement", {})
+                row = [
+                    res.get("spec_hash", ""),
+                    res.get("encoder", res.get("enc_name", "")),
+                    _fmt_bool(enc_opts.get("hadamard", False)),
+                    _fmt_bool(enc_opts.get("reupload", False)),
+                    str(enc_opts.get("angle_range", enc_opts.get("angle_scale", "-"))),
+                    f"{meas.get('name')}:{','.join(map(str, meas.get('wires', [])))}",
+                    str(res.get("layers", "")),
+                    res.get("ansatz", ""),
+                    f"{res['metrics']['accuracy']:.4f}",
+                    f"{res['metrics']['precision']:.4f}",
+                    f"{res['metrics']['recall']:.4f}",
+                    f"{res['metrics']['f1']:.4f}",
+                    f"{res['metrics'].get('balanced_accuracy', float('nan')):.4f}",
+                    f"{res['metrics'].get('auc', float('nan')):.4f}",
+                    f"{res['metrics'].get('val_balanced_accuracy', float('nan')):.4f}",
+                    f"{res['metrics'].get('threshold', float('nan')):.6f}",
+                    f"{float(res.get('compile_time_s', float('nan'))):.2f}",
+                    f"{float(res.get('core_train_time_s', float('nan'))):.2f}",
+                    f"{float(res.get('wall_time_s', float('nan'))):.2f}",
+                    os.path.basename(res.get("log_path", "")),
+                ]
+                if table is not None:
+                    table.add_data(*row)
+    finally:
+        if aggregate_run is not None:
+            if table is not None:
+                aggregate_run.log({"benchmark_runs": table})
+            if results:
+                best = max(results, key=lambda r: objective(r.get("metrics", {})))
+                aggregate_run.summary.update({
+                    "best_spec_hash": best.get("spec_hash"),
+                    "best_objective": objective(best.get("metrics", {})),
+                    "best_encoder": best.get("encoder", best.get("enc_name")),
+                    "best_ansatz": best.get("ansatz"),
+                    "best_layers": best.get("layers"),
+                    "best_measurement": best.get("measurement"),
+                })
+            aggregate_run.finish()
+
+    # Prepare human-readable table
+    headers = run_headers
+    rows: List[List[str]] = []
+    for r in results:
+        enc_opts = r.get("encoder_opts", r.get("enc_opts", {}))
+        meas = r.get("measurement", {})
+        rows.append([
+            r.get("spec_hash", ""),
+            r.get("encoder", r.get("enc_name", "")),
+            _fmt_bool(enc_opts.get("hadamard", False)),
+            _fmt_bool(enc_opts.get("reupload", False)),
+            str(enc_opts.get("angle_range", enc_opts.get("angle_scale", "-"))),
+            f"{meas.get('name')}:{','.join(map(str, meas.get('wires', [])))}",
+            str(r.get("layers", "")),
+            r.get("ansatz", ""),
+            f"{r['metrics']['accuracy']:.4f}",
+            f"{r['metrics']['precision']:.4f}",
+            f"{r['metrics']['recall']:.4f}",
+            f"{r['metrics']['f1']:.4f}",
+            f"{r['metrics'].get('balanced_accuracy', float('nan')):.4f}",
+            f"{r['metrics'].get('auc', float('nan')):.4f}",
+            f"{r['metrics'].get('val_balanced_accuracy', float('nan')):.4f}",
+            f"{r['metrics'].get('threshold', float('nan')):.6f}",
+            f"{float(r.get('compile_time_s', float('nan'))):.2f}",
+            f"{float(r.get('core_train_time_s', float('nan'))):.2f}",
+            f"{float(r.get('wall_time_s', float('nan'))):.2f}",
+            os.path.basename(r.get("log_path", "")),
+        ])
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < len(widths):
+                w = len(cell)
+                if w > widths[i]:
+                    widths[i] = w
+
+    sep = "-+-".join("-" * w for w in widths)
+    print("\n===== EdgeIIoT Binary QML Benchmark =====")
+    print(_pretty_row(headers, widths))
+    print(sep)
+    for row in rows:
+        print(_pretty_row(row, widths))
+    print("=======================================\n")
+
+
+def _enc_opts_from_cfg(cfg) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "hadamard": bool(getattr(cfg, "hadamard", False)),
+        "reupload": bool(getattr(cfg, "reupload", False)),
+    }
+    mode = str(getattr(cfg, "angle_mode", "none"))
+    if mode == "range_0_pi":
+        out["angle_range"] = "0_pi"
+    elif mode.startswith("scale_"):
+        try:
+            out["angle_scale"] = float(mode.split("_", 1)[1])
+        except Exception:
+            pass
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _sweep_main() -> None:
+    # Deprecated: unified into _sweep_train
+    _sweep_train()
+
+
+def _build_sweep_config(phase: str) -> Dict[str, Any]:
+    is_explore = phase == "explore"
+    # Optional override for sample via env (e.g., EDGE_SWEEP_SAMPLE=120000)
+    env_sample = os.environ.get("EDGE_SWEEP_SAMPLE")
+    sample_param = (
+        {"value": int(env_sample)}
+        if env_sample
+        else {"value": SWEEP_DEFAULT_SAMPLE}
+    )
+    # Learning rate grid: 0.01 → 0.10 with 4 linear steps
+    lr_values = SWEEP_LR_VALUES
+    params: Dict[str, Any] = {
+        "phase": {"value": phase},
+        "sample": sample_param,
+        # Sweep only over compilable knobs (scripts/core/compiled_core.py).
+        "enc_name": {
+            "values": [
+                "angle_pair_xy",
+                "angle_pattern_xyz",
+                "angle_embedding_y",
+            ]
+        },
+        # Angle scaling/range is implemented host-side in scripts/core/builders.py; keep it explicit.
+        "angle_mode": {"values": ["range_0_pi", "scale_1.0"]},
+        "hadamard": {"values": [True, False]},
+        "reupload": {"values": [False, True]},
+        "anz_name": {"values": ["strongly_entangling", "ring_rot_cnot"]},
+        "measurement": {"values": ["mean_z", "z0"]},
+    }
+    if is_explore:
+        # Narrow, explicit grid for layers and lr even in explore phase
+        params["layers"] = {"values": SWEEP_LAYERS}
+        params["lr"] = {"values": lr_values}
+        # Batch size is fixed in builders.run; keep epochs/seed configurable only
+        params["epochs"] = {"value": SWEEP_EXPLORE_EPOCHS}
+        params["seed"] = {"values": SWEEP_EXPLORE_SEEDS}
+        method = "random"
+        early = {"type": "hyperband", "min_iter": 2, "s": 2}
+    else:
+        # Expand phase also uses the explicit lr grid and fixed layer set
+        params["layers"] = {"values": SWEEP_LAYERS}
+        params["lr"] = {"values": lr_values}
+        # Batch size is fixed in builders.run; keep epochs/seed configurable only
+        params["epochs"] = {"value": SWEEP_EXPAND_EPOCHS}
+        params["seed"] = {"values": SWEEP_EXPAND_SEEDS}
+        method = "bayes"
+        early = {"type": "hyperband", "min_iter": 3, "s": 2}
+    return {
+        "name": f"edgeiiot-lr-layers-120k-{phase}",
+        "method": method,
+        "metric": {"name": "objective", "goal": "maximize"},
+        "parameters": params,
+        "early_terminate": early,
+    }
+
+
+def _sweep_train() -> None:
+    if _wandb_disabled():
+        print("[ERROR] Sweep mode requires W&B. Unset WANDB_DISABLED or use EDGE_MODE=grid.")
+        return
+    cfg_kwargs = _wandb_base_kwargs(name=None, job_type="sweep-run")
+    # Add phase tag if present in config later
+    run = wandb.init(**cfg_kwargs)
+    cfg = wandb.config
+    phase_tag = f"phase:{getattr(cfg, 'phase', 'unknown')}"
+    try:
+        if run is not None:
+            tags = list(getattr(run, "tags", []) or [])
+            if phase_tag not in tags:
+                run.tags = tags + [phase_tag]
+    except Exception:
+        pass
+    feats = _active_features()
+    meas_name = str(getattr(cfg, "measurement", "mean_z"))
+    meas = (
+        {"name": "mean_z", "wires": list(range(len(feats)))}
+        if (meas_name == "mean_z" and feats)
+        else {"name": "z0", "wires": [0]}
+    )
+    enc_opts = _enc_opts_from_cfg(cfg)
+    # Allow env overrides for test_size/stratify to control exact train/test split
+    env_test_size = os.environ.get("EDGE_TEST_SIZE")
+    env_strat = os.environ.get("EDGE_STRATIFY", "1")
+    train_params = {
+        "lr": float(getattr(cfg, "lr", EDGE_DEFAULT_LR)),
+        # Respect fixed batch size used in builders.run; do not sweep batch.
+        "batch": EDGE_DEFAULT_BATCH,
+        "epochs": int(getattr(cfg, "epochs", EDGE_DEFAULT_EPOCHS)),
+        "class_weights": getattr(cfg, "class_weights", EDGE_DEFAULT_CLASS_WEIGHTS),
+        "seed": int(getattr(cfg, "seed", EDGE_DEFAULT_SEED)),
+    }
+    if env_test_size is not None:
+        try:
+            train_params["test_size"] = float(env_test_size)
+        except Exception:
+            pass
+    train_params["stratify"] = env_strat not in ("0", "false", "False")
+    _ = run_one(
+        sample=int(getattr(cfg, "sample", 120000)),
+        enc_name=str(getattr(cfg, "enc_name")),
+        enc_opts=enc_opts,
+        layers=int(getattr(cfg, "layers")),
+        meas=meas,
+        anz_name=str(getattr(cfg, "anz_name")),
+        seed=int(getattr(cfg, "seed", 42)),
+        train_params=train_params,
+        use_current_wandb_run=True,
+    )
+
+
+def _run_sweeps_autorun() -> None:
+    if _wandb_disabled():
+        print("[INFO] W&B disabled; sweeps require W&B. Use EDGE_MODE=grid instead.")
+        return
+    explore_count = _env_int("EDGE_EXPLORE_COUNT", EXPLORE_COUNT_DEFAULT)
+    expand_count = _env_int("EDGE_EXPAND_COUNT", EXPAND_COUNT_DEFAULT)
+    project = _wandb_project()
+    entity = _wandb_entity()
+    try:
+        _wandb_ensure_login()
+    except Exception as exc:
+        print(f"Cannot login to W&B: {exc}")
+        return
+    # Create or reuse explore sweep
+    explore_id = os.environ.get("EDGE_EXPLORE_SWEEP_ID")
+    if not explore_id:
+        explore_cfg = _build_sweep_config("explore")
+        explore_id = wandb.sweep(explore_cfg, project=project, entity=entity)
+    print(f"[W&B] Explore sweep id: {explore_id}")
+    wandb.agent(explore_id, function=_sweep_train, count=explore_count)
+    # Create or reuse expand sweep
+    expand_id = os.environ.get("EDGE_EXPAND_SWEEP_ID")
+    if not expand_id:
+        expand_cfg = _build_sweep_config("expand")
+        expand_id = wandb.sweep(expand_cfg, project=project, entity=entity)
+    print(f"[W&B] Expand sweep id: {expand_id}")
+    wandb.agent(expand_id, function=_sweep_train, count=expand_count)
+
+
+def run_rf_baseline(sample: int = 60000, seed: int = 42, n_estimators: int = 200, class_weight: str = "balanced", stratify: bool = True, test_size: float = 0.2) -> Dict[str, Any]:
+    # Always derive 8 supervised components from all features for RF
+    feats = EDGE_FEATURES
+    measurement = {"name": "none", "wires": []}
+    r = Recipe() | csv(EDGE_DATASET, sample_size=None) | select(feats, label=EDGE_LABEL)
+    r = r | quantile_uniform()
+    r = r | pls_to_pow2(components=8)
+    r = r | train(lr=0.0, batch=0, epochs=0, class_weights=None, seed=seed, test_size=test_size, stratify=stratify)
+    r = r | rf_baseline(n_estimators=n_estimators, class_weight=class_weight, random_state=seed)
+    recipe = r
+    summary = run(recipe)
+    try:
+        cd = summary.get("class_distribution", {})
+        print(f"Class distribution | train(+/−): {cd.get('train_pos')}/{cd.get('train_neg')} | test(+/−): {cd.get('test_pos')}/{cd.get('test_neg')}")
+    except Exception:
+        pass
+    # Optionally log to W&B in a small run for traceability
+    if not _wandb_disabled():
+        try:
+            _wandb_ensure_login()
+            run_name = f"rf-baseline-s{seed}-{summary.get('dataset','edge')}"
+            wkwargs = _wandb_base_kwargs(run_name, job_type="rf-baseline", tags=["baseline","rf"])
+            w = wandb.init(**wkwargs)
+            if "metrics" in summary:
+                w.log({f"metrics/{k}": v for k, v in summary["metrics"].items()})
+                w.summary.update(summary["metrics"])
+            if "class_distribution" in summary:
+                w.log({"class_distribution": summary["class_distribution"]})
+            w.finish()
+        except Exception:
+            pass
+    return summary
+
+if __name__ == "__main__":
+    # Default: run sweeps if W&B enabled, else grid. Set EDGE_MODE to override.
+    mode = os.environ.get("EDGE_MODE", "").lower()
+    if len(sys.argv) > 1 and sys.argv[1] == "--sweep":
+        _sweep_train()
+    elif mode == "grid":
+        main()
+    elif mode == "rf":
+        run_rf_baseline(
+            sample=_env_int("EDGE_SAMPLE", BENCHMARK_DEFAULT_SAMPLE),
+            seed=_env_int("EDGE_SEED", EDGE_DEFAULT_SEED),
+            n_estimators=_env_int("RF_N_ESTIMATORS", 200),
+            class_weight=os.environ.get("RF_CLASS_WEIGHT", "balanced"),
+            stratify=os.environ.get("EDGE_STRATIFY", "1") not in ("0", "false", "False"),
+            test_size=float(os.environ.get("EDGE_TEST_SIZE", "0.2")),
+        )
+    elif _wandb_disabled():
+        # Sweeps require W&B; fall back to grid
+        main()
+    else:
+        _run_sweeps_autorun()
+</file>
+
+<file path="scripts/core/builders.py">
 from __future__ import annotations
 
 # Central functional DSL for building and running QML experiments
@@ -1574,3 +3233,6 @@ def load_model(path: str, device_override: Optional[str] = None):
             return npy.where(scores_np >= float(self.threshold), 1.0, -1.0)
 
     return LoadedQuantumClassifier()
+</file>
+
+</files>

@@ -35,7 +35,7 @@
     "scripts/core/builders.py",
     "scripts/core/compiler.py",
     "scripts/core/compiled_core.py",
-    "scripts/train_edge_pls8_binary.py"
+    "scripts/QML_ML-EdgeIIoT-benchmark.py",
   ],
   "ignore": {
     "useGitignore": true,

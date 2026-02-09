@@ -38,9 +38,6 @@ def get_compiled_core(
     num_batches: Optional[int] = None,
     batch_size: Optional[int] = None,
 ) -> Dict[str, Callable]:
-    batch_impl = os.environ.get("EDGE_BATCH_FORWARD_IMPL", "map").strip().lower()
-    if batch_impl not in {"map", "scan"}:
-        batch_impl = "map"
     if num_batches is None:
         num_batches = 1
     if batch_size is None:
@@ -61,7 +58,6 @@ def get_compiled_core(
         bool(reupload),
         num_batches,
         batch_size,
-        batch_impl,
     )
     cached = _CORE_CACHE.get(cache_key)
     if cached is not None:
@@ -187,30 +183,20 @@ def build_compiled_core(
 
     qnode_compiled = qjit(qnode_forward, **backend.compile_opts)
 
-    batch_impl = os.environ.get("EDGE_BATCH_FORWARD_IMPL", "map").strip().lower()
-    if batch_impl not in {"map", "scan"}:
-        batch_impl = "map"
-
     def _batch_logits(weights, bias, alpha, xb):
-        if batch_impl == "scan":
-            def _scan_body(_, x):
-                logit = jnp.asarray(alpha * qnode_forward(weights, x) + bias, dtype=backend.dtype)
-                return None, logit
+        def _scan_body(_, x):
+            logit = jnp.asarray(alpha * qnode_forward(weights, x) + bias, dtype=backend.dtype)
+            return None, logit
 
-            _, logits = jax.lax.scan(_scan_body, None, xb)
-            return logits
-        return jax.lax.map(
-            lambda x: jnp.asarray(alpha * qnode_forward(weights, x) + bias, dtype=backend.dtype), xb
-        )
+        _, logits = jax.lax.scan(_scan_body, None, xb)
+        return logits
 
     def batched_forward(weights, X_batch):
-        if batch_impl == "scan":
-            def _scan_body(_, x):
-                return None, qnode_compiled(weights, x)
+        def _scan_body(_, x):
+            return None, qnode_compiled(weights, x)
 
-            _, preds = jax.lax.scan(_scan_body, None, X_batch)
-            return preds
-        return jax.lax.map(lambda x: qnode_compiled(weights, x), X_batch)
+        _, preds = jax.lax.scan(_scan_body, None, X_batch)
+        return preds
 
     def bce_with_logits(logits, targets01, sample_weights):
         logits = jnp.asarray(logits, dtype=backend.dtype)
@@ -262,19 +248,12 @@ def build_compiled_core(
                 opt_state,
             )
         )
-        # Compute training loss once per epoch using the final batch to avoid
-        # an extra forward call on every step.
         final_i = num_batches - 1
         final_loss = _batch_loss_map(
-            weights,
-            bias,
-            alpha,
-            X_steps[final_i],
-            y01_steps[final_i],
-            w_steps[final_i],
+            weights, bias, alpha,
+            X_steps[final_i], y01_steps[final_i], w_steps[final_i],
         )
-        mean_loss = final_loss
-        loss_stats = jnp.asarray([mean_loss, final_loss], dtype=backend.dtype)
+        loss_stats = jnp.asarray([final_loss, final_loss], dtype=backend.dtype)
         return ((weights, bias, alpha), opt_state), key, loss_stats
 
     def assert_no_python_callback_ir(
