@@ -37,6 +37,71 @@ import os
 
 warnings.filterwarnings('ignore')
 
+# Salva automaticamente todas as figuras em classical/figures quando plt.show() for chamado.
+FIGURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
+os.makedirs(FIGURES_DIR, exist_ok=True)
+_FIGURE_SAVE_COUNT = 0
+
+
+def _save_figures_instead_of_show(*args, **kwargs):
+    global _FIGURE_SAVE_COUNT
+    fig_nums = plt.get_fignums()
+    for fig_num in fig_nums:
+        fig = plt.figure(fig_num)
+        _FIGURE_SAVE_COUNT += 1
+        out_name = f"classificacao_qcyber_{_FIGURE_SAVE_COUNT:04d}.png"
+        out_path = os.path.join(FIGURES_DIR, out_name)
+        fig.savefig(out_path, dpi=200, bbox_inches="tight")
+        print(f"[FIGURE] Saved: {out_path}")
+    plt.close("all")
+
+
+plt.show = _save_figures_instead_of_show
+
+# Trio-only dataset policy: usa diretamente o CSV final do trio (source -> trio merged).
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+TRIO_DATASET_PATH = os.path.abspath(
+    os.environ.get(
+        "EDGE_TRIO_DATASET",
+        os.path.join(_PROJECT_ROOT, "data", "processed", "edge_iot_trio_binary.csv"),
+    )
+)
+_LEGACY_DATASET_FILENAMES = {
+    "ML-EdgeIIoT-dataset.csv",
+    "edge_pls8_debug.csv",
+    "ML-EdgeIIoT-dataset-pp.csv",
+    "CICIDS2017_Combinado.csv",
+    "PCA_CICIDS2017.csv",
+    "UNSW_NB15_Combinado.csv",
+    "UNSW_NB15_Combinado_preprocessing.csv",
+    "CIC-DDoS2019_Combinado.csv",
+    "PCA_CIC-DDoS2019.csv",
+    "unified_cicids_unsw_common.csv",
+    "edge_pls8_full.csv",
+}
+
+
+def _validate_trio_dataset():
+    if not os.path.exists(TRIO_DATASET_PATH):
+        raise FileNotFoundError(
+            f"Dataset do trio não encontrado: {TRIO_DATASET_PATH}. "
+            "Gere com scripts/prepare_trio_merged_dataset.py ou defina EDGE_TRIO_DATASET."
+        )
+_validate_trio_dataset()
+_ORIGINAL_READ_CSV = pd.read_csv
+
+
+def _read_csv_with_trio_redirection(filepath_or_buffer, *args, **kwargs):
+    if isinstance(filepath_or_buffer, str):
+        basename = os.path.basename(filepath_or_buffer)
+        if basename in _LEGACY_DATASET_FILENAMES:
+            print(f"[TRIO] Redirecting '{basename}' -> '{TRIO_DATASET_PATH}'")
+            filepath_or_buffer = TRIO_DATASET_PATH
+    return _ORIGINAL_READ_CSV(filepath_or_buffer, *args, **kwargs)
+
+
+pd.read_csv = _read_csv_with_trio_redirection
+
 # --- 1. FUNÇÕES AUXILIARES PARA ANÁLISE ---
 
 def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, model_name, n_top_features=3):

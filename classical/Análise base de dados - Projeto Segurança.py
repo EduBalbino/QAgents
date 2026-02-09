@@ -8,78 +8,59 @@ import kagglehub
 import os
 from zipfile import ZipFile
 import json
+import shutil
 
-# Trio alvo solicitado: Edge-IIoTSet-2022, IoT-2023, UQ-IOT-2022
-# O script passa a usar o CSV merged local e materializa subconjuntos por source_dataset.
-TRIO_DATASET_ALIASES = {
-    "Edge-IIoTSet-2022": ["Edge-IIoTSet-2022", "CIC-BCCC-NRC-Edge-IIoTSet-2022"],
-    "IoT-2023": ["IoT-2023", "CIC-BCCC-NRC-IoT-2023-Original Training and Testing"],
-    "UQ-IOT-2022": ["UQ-IOT-2022", "CIC-BCCC-NRC-UQ-IOT-2022"],
-}
+# Salva automaticamente todas as figuras em classical/figures quando plt.show() for chamado.
+FIGURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
+os.makedirs(FIGURES_DIR, exist_ok=True)
+_FIGURE_SAVE_COUNT = 0
 
+
+def _save_figures_instead_of_show(*args, **kwargs):
+    global _FIGURE_SAVE_COUNT
+    fig_nums = plt.get_fignums()
+    for fig_num in fig_nums:
+        fig = plt.figure(fig_num)
+        _FIGURE_SAVE_COUNT += 1
+        out_name = f"analise_projeto_seguranca_{_FIGURE_SAVE_COUNT:04d}.png"
+        out_path = os.path.join(FIGURES_DIR, out_name)
+        fig.savefig(out_path, dpi=200, bbox_inches="tight")
+        print(f"[FIGURE] Saved: {out_path}")
+    plt.close("all")
+
+
+plt.show = _save_figures_instead_of_show
 
 def prepare_trio_dataset_dir():
-    merged_path = os.environ.get(
-        "EDGE_TRIO_MERGED_DATASET",
-        os.path.join(os.getcwd(), "..", "data", "processed", "edge_iot_merged_binary.csv"),
+    trio_dataset_path = os.path.abspath(
+        os.environ.get(
+            "EDGE_TRIO_DATASET",
+            os.path.join(os.getcwd(), "..", "data", "processed", "edge_iot_trio_binary.csv"),
+        )
     )
-    merged_path = os.path.abspath(merged_path)
+    if not os.path.exists(trio_dataset_path):
+        raise FileNotFoundError(
+            f"Dataset do trio não encontrado em: {trio_dataset_path}. "
+            "Gere com scripts/prepare_trio_merged_dataset.py."
+        )
+
     out_dir = os.path.abspath(
         os.environ.get(
             "CLASSICAL_TRIO_CACHE_DIR",
-            os.path.join(os.getcwd(), "..", "cache", "classical_trio_subsets"),
+            os.path.join(os.getcwd(), "..", "cache", "classical_trio_input"),
         )
     )
     os.makedirs(out_dir, exist_ok=True)
+    link_path = os.path.join(out_dir, "edge_iot_trio_binary.csv")
 
-    if not os.path.exists(merged_path):
-        raise FileNotFoundError(
-            f"CSV merged não encontrado em: {merged_path}. "
-            "Defina EDGE_TRIO_MERGED_DATASET para o caminho correto."
-        )
+    if os.path.islink(link_path) or os.path.exists(link_path):
+        os.remove(link_path)
+    try:
+        os.symlink(trio_dataset_path, link_path)
+    except OSError:
+        shutil.copy2(trio_dataset_path, link_path)
 
-    requested = [k.strip() for k in os.environ.get("CLASSICAL_TRIO_DATASETS", "").split(",") if k.strip()]
-    if not requested:
-        requested = ["Edge-IIoTSet-2022", "IoT-2023", "UQ-IOT-2022"]
-
-    alias_map = {}
-    for name in requested:
-        alias_map[name] = TRIO_DATASET_ALIASES.get(name, [name])
-
-    out_files = {name: os.path.join(out_dir, f"{name.replace(' ', '_')}.csv") for name in requested}
-    wrote_header = {name: False for name in requested}
-    rows_written = {name: 0 for name in requested}
-
-    for out_file in out_files.values():
-        if os.path.exists(out_file):
-            os.remove(out_file)
-
-    for chunk in pd.read_csv(merged_path, chunksize=200000):
-        if "source_dataset" not in chunk.columns:
-            raise ValueError(
-                "Coluna 'source_dataset' não encontrada no CSV merged. "
-                "Use o dataset merged que contém essa coluna."
-            )
-        src = chunk["source_dataset"].astype(str)
-        for name, aliases in alias_map.items():
-            mask = src.str.contains("|".join(aliases), case=False, na=False, regex=True)
-            subset = chunk[mask]
-            if subset.empty:
-                continue
-            subset.to_csv(out_files[name], index=False, mode="a", header=not wrote_header[name])
-            wrote_header[name] = True
-            rows_written[name] += len(subset)
-
-    missing = [name for name, n_rows in rows_written.items() if n_rows == 0]
-    if missing:
-        raise RuntimeError(
-            f"Nenhuma linha encontrada para datasets: {missing}. "
-            "Verifique os nomes em CLASSICAL_TRIO_DATASETS ou os valores de source_dataset."
-        )
-
-    print(f"Trio materializado a partir de: {merged_path}")
-    for name, out_file in out_files.items():
-        print(f" - {name}: {rows_written[name]} linhas -> {out_file}")
+    print(f"Dataset do trio pronto: {link_path}")
     return out_dir
 
 # Configurações para exibição de dados

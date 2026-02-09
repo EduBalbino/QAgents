@@ -73,68 +73,16 @@ def objective(m: Dict[str, float]) -> float:
 
 
 EDGE_DATASET = os.environ.get("EDGE_DATASET", "data/ML-EdgeIIoT-dataset-binario.csv")
-# Columns come from QML_ML-EdgeIIoT-Binario.py
+# Focused TCP feature set for compact PLS training.
+# Attack_label remains the target label.
 EDGE_FEATURES = [
-    'ip.src_host',
-    'ip.dst_host',
-    'arp.dst.proto_ipv4',
-    'arp.opcode',
-    'arp.hw.size',
-    'arp.src.proto_ipv4',
-    'icmp.checksum',
-    'icmp.seq_le',
-    'icmp.transmit_timestamp',
-    'icmp.unused',
-    'http.file_data',
-    'http.content_length',
-    'http.request.uri.query',
-    'http.request.method',
-    'http.referer',
-    'http.request.full_uri',
-    'http.request.version',
-    'http.response',
-    'http.tls_port',
-    'tcp.ack',
-    'tcp.ack_raw',
-    'tcp.checksum',
-    'tcp.connection.fin',
-    'tcp.connection.rst',
-    'tcp.connection.syn',
-    'tcp.connection.synack',
-    'tcp.dstport',
-    'tcp.flags',
-    'tcp.flags.ack',
-    'tcp.len',
-    'tcp.options',
-    'tcp.payload',
-    'tcp.seq',
-    'tcp.srcport',
-    'udp.port',
-    'udp.stream',
-    'udp.time_delta',
-    'dns.qry.name',
-    'dns.qry.name.len',
-    'dns.qry.qu',
-    'dns.qry.type',
-    'dns.retransmission',
-    'dns.retransmit_request',
-    'dns.retransmit_request_in',
-    'mqtt.conack.flags',
-    'mqtt.conflag.cleansess',
-    'mqtt.conflags',
-    'mqtt.hdrflags',
-    'mqtt.len',
-    'mqtt.msg_decoded_as',
-    'mqtt.msg',
-    'mqtt.msgtype',
-    'mqtt.proto_len',
-    'mqtt.protoname',
-    'mqtt.topic',
-    'mqtt.topic_len',
-    'mqtt.ver',
-    'mbtcp.len',
-    'mbtcp.trans_id',
-    'mbtcp.unit_id',
+    "tcp.ack",
+    "tcp.ack_raw",
+    "tcp.checksum",
+    "tcp.dstport",
+    "tcp.flags",
+    "tcp.flags.ack",
+    "tcp.seq",
 ]
 EDGE_LABEL = os.environ.get("EDGE_LABEL", "Attack_label")
 
@@ -156,7 +104,7 @@ _WANDB_LOGIN_OK: Optional[bool] = None
 # Default training / sweep hyperparameters (overridable via env or W&B sweeps)
 EDGE_FIXED_EPOCHS = 4
 EDGE_DEFAULT_SAMPLE = 120000
-EDGE_DEFAULT_LR = 0.1
+EDGE_DEFAULT_LR = 0.05
 EDGE_DEFAULT_BATCH = 64
 EDGE_DEFAULT_EPOCHS = EDGE_FIXED_EPOCHS
 EDGE_DEFAULT_CLASS_WEIGHTS = "balanced"
@@ -171,14 +119,12 @@ os.environ.setdefault("EDGE_PREPROCESS_SPLIT_SEED", str(EDGE_DEFAULT_SEED))
 # stay comparable across time and compilation caching stays stable.
 
 PHASE_A_SAMPLE = 120000
-PHASE_A_EPOCHS = 100
+PHASE_A_EPOCHS = 20
 PHASE_A_SEEDS = [42, 1337, 2024]
-PHASE_A_LR_VALUES = [0.01, 0.005]
+PHASE_A_LR_VALUES = [0.05]
 
 PHASE_A_ENC_NAMES = [
     "angle_embedding_y",
-    "angle_pair_xy",
-    "angle_pattern_xyz",
 ]
 # "angle_mode" is interpreted by _enc_opts_from_cfg:
 # - range_0_pi -> angle_range=0_pi
@@ -276,7 +222,7 @@ def build_recipe(sample: int,
                  anz_name: str,
                  seed: int,
                  train_params: Optional[Dict[str, Any]] = None) -> Recipe:
-    # Use all raw features; supervised PLS will reduce to 8 components
+    # Use selected raw features; supervised PLS will reduce to 7 components
     feats = EDGE_FEATURES
     tp: Dict[str, Any] = _default_train_params(seed)
     if train_params:
@@ -285,10 +231,10 @@ def build_recipe(sample: int,
             for k in ("lr", "batch", "epochs", "class_weights", "seed", "test_size", "stratify")
             if k in train_params
         }
-    # Use train-fitted quantile mapping and supervised PLS to 8 components for QML
+    # Use train-fitted quantile mapping and supervised PLS to 7 components for QML
     r = Recipe() | csv(EDGE_DATASET, sample_size=sample) | select(feats, label=EDGE_LABEL)
     r = r | quantile_uniform()
-    r = r | pls_to_pow2(components=8)
+    r = r | pls_to_pow2(components=7)
     dev_name = os.environ.get("QML_DEVICE", "lightning.qubit")
     r = (
         r
@@ -297,7 +243,7 @@ def build_recipe(sample: int,
         | ansatz(anz_name, layers=layers)
         | train(**tp)
     )
-    # Amplitude embedding receives 8 PLS components (pow2), no PCA insertion needed
+    # Embedding receives 7 PLS components, no PCA insertion needed
     # Insert measurement as a trailing step for builders.run to pick up
     r.parts.append(type(r.parts[0])(kind="measurement", params=meas))
     return r
@@ -605,7 +551,6 @@ def main() -> None:
     # Compiled-safe benchmark defaults.
     encoders: List[Tuple[str, Dict[str, Any]]] = [
         ("angle_embedding_y", {"angle_scale": 0.5, "reupload": True}),
-        ("angle_pair_xy", {"angle_scale": 0.5, "reupload": True}),
     ]
 
     # Mean-Z readout across active wires.
@@ -842,9 +787,13 @@ def _sweep_train() -> None:
         except Exception:
             pass
     train_params["stratify"] = env_strat not in ("0", "false", "False")
+    # Force compiled-safe encoder regardless of legacy sweep configs.
+    forced_enc = "angle_embedding_y"
+    if str(getattr(cfg, "enc_name", forced_enc)) != forced_enc:
+        print(f"[SWEEP] Overriding enc_name={getattr(cfg, 'enc_name', None)} -> {forced_enc}")
     _ = run_one(
         sample=int(getattr(cfg, "sample", 120000)),
-        enc_name=str(getattr(cfg, "enc_name")),
+        enc_name=forced_enc,
         enc_opts=enc_opts,
         layers=int(getattr(cfg, "layers")),
         meas=meas,
@@ -947,12 +896,12 @@ def _run_sweeps_autorun() -> None:
 
 
 def run_rf_baseline(sample: int = 60000, seed: int = 42, n_estimators: int = 200, class_weight: str = "balanced", stratify: bool = True, test_size: float = 0.2) -> Dict[str, Any]:
-    # Always derive 8 supervised components from all features for RF
+    # Always derive 7 supervised components from selected features for RF
     feats = EDGE_FEATURES
     measurement = {"name": "none", "wires": []}
     r = Recipe() | csv(EDGE_DATASET, sample_size=None) | select(feats, label=EDGE_LABEL)
     r = r | quantile_uniform()
-    r = r | pls_to_pow2(components=8)
+    r = r | pls_to_pow2(components=7)
     r = r | train(lr=0.0, batch=0, epochs=0, class_weights=None, seed=seed, test_size=test_size, stratify=stratify)
     r = r | rf_baseline(n_estimators=n_estimators, class_weight=class_weight, random_state=seed)
     recipe = r

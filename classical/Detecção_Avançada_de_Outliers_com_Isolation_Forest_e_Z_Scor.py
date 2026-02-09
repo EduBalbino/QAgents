@@ -29,7 +29,29 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import warnings
+import os
 warnings.filterwarnings('ignore')
+
+# Salva automaticamente todas as figuras em classical/figures quando plt.show() for chamado.
+FIGURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
+os.makedirs(FIGURES_DIR, exist_ok=True)
+_FIGURE_SAVE_COUNT = 0
+
+
+def _save_figures_instead_of_show(*args, **kwargs):
+    global _FIGURE_SAVE_COUNT
+    fig_nums = plt.get_fignums()
+    for fig_num in fig_nums:
+        fig = plt.figure(fig_num)
+        _FIGURE_SAVE_COUNT += 1
+        out_name = f"deteccao_outliers_{_FIGURE_SAVE_COUNT:04d}.png"
+        out_path = os.path.join(FIGURES_DIR, out_name)
+        fig.savefig(out_path, dpi=200, bbox_inches="tight")
+        print(f"[FIGURE] Saved: {out_path}")
+    plt.close("all")
+
+
+plt.show = _save_figures_instead_of_show
 
 # Importar display se não estiver no ambiente Jupyter/Colab padrão
 try:
