@@ -4,6 +4,7 @@ from __future__ import annotations
 # Keeps per-experiment shims tiny while concentrating shared logic here.
 
 from dataclasses import dataclass
+import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Dedup guards for log lines within a single process run
@@ -262,6 +263,165 @@ def _setup_logger(log_filename: str, tee_to_terminal: bool = True):
     sys.stderr = logger
 
 
+def _hash_preprocess_config(payload: Dict[str, Any]) -> str:
+    import json as _json
+    import hashlib as _hashlib
+
+    def _default(o: Any) -> str:
+        return str(o)
+
+    raw = _json.dumps(payload, sort_keys=True, default=_default).encode("utf-8")
+    return _hashlib.sha256(raw).hexdigest()
+
+
+def _preprocess_cache_paths(root: str) -> Dict[str, str]:
+    arrays_dir = os.path.join(root, "arrays")
+    return {
+        "root": root,
+        "arrays_dir": arrays_dir,
+        "meta": os.path.join(root, "preprocess_meta.json"),
+        "state_npz": os.path.join(root, "preprocess_state.npz"),
+        "state_json": os.path.join(root, "preprocess_state.json"),
+    }
+
+
+def _save_preprocess_state_npz(
+    path: str,
+    *,
+    scaler_state: Optional[Dict[str, Any]],
+    quantile_state: Optional[Dict[str, Any]],
+    pls_state: Optional[Dict[str, Any]],
+    pca_state: Optional[Dict[str, Any]],
+) -> None:
+    import numpy as _np
+
+    payload: Dict[str, Any] = {}
+
+    def _add_state(prefix: str, state: Optional[Dict[str, Any]]) -> None:
+        if not state:
+            return
+        for key, val in state.items():
+            if val is None:
+                continue
+            payload[f"{prefix}__{key}"] = _np.asarray(val)
+
+    _add_state("scaler", scaler_state)
+    _add_state("quantile", quantile_state)
+    _add_state("pls", pls_state)
+    _add_state("pca", pca_state)
+
+    if payload:
+        _np.savez(path, **payload)
+
+
+def _load_preprocess_state_npz(path: str) -> Dict[str, Dict[str, Any]]:
+    import numpy as _np
+
+    if not os.path.exists(path):
+        return {"scaler": {}, "quantile": {}, "pls": {}, "pca": {}}
+
+    npz = _np.load(path, allow_pickle=False)
+
+    def _extract(prefix: str) -> Dict[str, Any]:
+        st: Dict[str, Any] = {}
+        prefix_tag = f"{prefix}__"
+        for key in npz.files:
+            if not key.startswith(prefix_tag):
+                continue
+            name = key[len(prefix_tag) :]
+            val = npz[key]
+            if isinstance(val, _np.ndarray) and val.shape == ():
+                val = val.item()
+            st[name] = val
+        return st
+
+    return {
+        "scaler": _extract("scaler"),
+        "quantile": _extract("quantile"),
+        "pls": _extract("pls"),
+        "pca": _extract("pca"),
+    }
+
+
+def _rebuild_preprocess_objects(
+    *,
+    scaler_state: Optional[Dict[str, Any]],
+    quantile_state: Optional[Dict[str, Any]],
+    pls_state: Optional[Dict[str, Any]],
+    pca_state: Optional[Dict[str, Any]],
+):
+    import numpy as _np
+
+    scaler = None
+    quantile = None
+    pls = None
+    pca = None
+    try:
+        from sklearn.preprocessing import MinMaxScaler as _SkMinMax
+    except Exception:
+        _SkMinMax = None
+    try:
+        from sklearn.preprocessing import QuantileTransformer as _SkQuantile
+    except Exception:
+        _SkQuantile = None
+    try:
+        from sklearn.cross_decomposition import PLSRegression as _SkPLS
+    except Exception:
+        _SkPLS = None
+    try:
+        from sklearn.decomposition import PCA as _SkPCA
+    except Exception:
+        _SkPCA = None
+
+    if scaler_state and _SkMinMax is not None:
+        try:
+            sc = _SkMinMax(feature_range=tuple(scaler_state.get("feature_range", (0, 1))))
+            for attr in ["min_", "scale_", "data_min_", "data_max_", "data_range_", "n_samples_seen_"]:
+                val = scaler_state.get(attr)
+                if val is not None:
+                    setattr(sc, attr, _np.array(val))
+            scaler = sc
+        except Exception:
+            scaler = None
+    if quantile_state and _SkQuantile is not None:
+        try:
+            qt = _SkQuantile(
+                n_quantiles=int(quantile_state.get("n_quantiles") or 1000),
+                output_distribution=quantile_state.get("output_distribution") or "uniform",
+                subsample=int(quantile_state.get("subsample") or 1e9),
+                random_state=quantile_state.get("random_state", None),
+            )
+            for attr in ["n_quantiles_", "quantiles_", "references_", "n_features_in_"]:
+                val = quantile_state.get(attr)
+                if val is not None:
+                    setattr(qt, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+            quantile = qt
+        except Exception:
+            quantile = None
+    if pls_state and _SkPLS is not None:
+        try:
+            pls_r = _SkPLS(n_components=int(pls_state.get("n_components") or 2))
+            for attr in ["x_mean_", "x_std_", "x_weights_", "x_rotations_", "n_features_in_"]:
+                val = pls_state.get(attr)
+                if val is not None:
+                    setattr(pls_r, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+            pls = pls_r
+        except Exception:
+            pls = None
+    if pca_state and _SkPCA is not None:
+        try:
+            pca_r = _SkPCA(n_components=int(pca_state.get("n_components") or 2))
+            for attr in ["components_", "mean_", "n_features_in_"]:
+                val = pca_state.get(attr)
+                if val is not None:
+                    setattr(pca_r, attr, _np.array(val) if attr != "n_features_in_" else int(val))
+            pca = pca_r
+        except Exception:
+            pca = None
+
+    return scaler, quantile, pls, pca
+
+
 def run(recipe: Recipe) -> Dict[str, Any]:
     import os
     import datetime
@@ -319,6 +479,20 @@ def run(recipe: Recipe) -> Dict[str, Any]:
     sel_cfg = cfg.get("dataset.select", {})
     features: List[str] = sel_cfg.get("features", [])
     label_col: str = sel_cfg.get("label")
+    q_cfg = cfg.get("dataset.quantile_uniform", None)
+    pls_cfg = cfg.get("dataset.pls_pow2", None)
+    pca_cfg = cfg.get("dataset.pca_pow2", None)
+    batch_size_cfg = max(1, int(tr_cfg.get("batch", 256)))
+    val_frac_cfg = float(tr_cfg.get("val_size", 0.1))
+    test_size = float(tr_cfg.get("test_size", 0.2))
+    stratify = bool(tr_cfg.get("stratify", True))
+    split_seed = seed
+    env_preprocess_seed = os.environ.get("EDGE_PREPROCESS_SPLIT_SEED")
+    if env_preprocess_seed not in (None, "", "None"):
+        try:
+            split_seed = int(env_preprocess_seed)
+        except Exception:
+            pass
 
     def _synthesize(n_rows: int) -> "pd.DataFrame":
         rng = np.random.default_rng(42)
@@ -332,30 +506,91 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         data[label_col or "Label"] = y
         return pd.DataFrame(data)
 
-    if path and os.path.exists(path):
-        if sample_size is None:
-            df = pd.read_csv(path, low_memory=False)
+    preprocess_loaded = False
+    preprocess_root = os.environ.get("EDGE_PREPROCESS_ARTIFACT")
+    preprocess_paths: Dict[str, str] = {}
+    preprocess_config_hash = ""
+    if preprocess_root:
+        preprocess_root = os.path.abspath(preprocess_root)
+        if preprocess_root.endswith(".npz") or preprocess_root.endswith(".npy"):
+            preprocess_root = os.path.dirname(preprocess_root)
+        os.makedirs(preprocess_root, exist_ok=True)
+        preprocess_paths = _preprocess_cache_paths(preprocess_root)
+        print(f"[PREPROCESS] Using cache root: {preprocess_root}")
+        preprocess_cfg = {
+            "dataset": {"path": path, "sample_size": sample_size},
+            "select": {"features": features, "label": label_col},
+            "split": {"test_size": test_size, "stratify": stratify, "seed": split_seed},
+            "train": {"batch": batch_size_cfg, "val_size": val_frac_cfg, "class_weights": tr_cfg.get("class_weights", "balanced")},
+            "quantile": q_cfg,
+            "pls": pls_cfg,
+            "pca": pca_cfg,
+        }
+        preprocess_config_hash = _hash_preprocess_config(preprocess_cfg)
+        if os.path.exists(preprocess_paths["meta"]):
+            try:
+                import json as _json
+                with open(preprocess_paths["meta"], "r") as _f:
+                    _meta = _json.load(_f)
+                if _meta.get("config_hash") == preprocess_config_hash and int(_meta.get("version", 0)) == 1:
+                    arrays_dir = preprocess_paths["arrays_dir"]
+                    X_train_scaled = np.load(os.path.join(arrays_dir, "X_train_scaled.npy"), mmap_mode="r")
+                    X_test_scaled = np.load(os.path.join(arrays_dir, "X_test_scaled.npy"), mmap_mode="r")
+                    Y_train = np.load(os.path.join(arrays_dir, "Y_train.npy"), mmap_mode="r")
+                    Y_test = np.load(os.path.join(arrays_dir, "Y_test.npy"), mmap_mode="r")
+                    Y_train01 = np.load(os.path.join(arrays_dir, "Y_train01.npy"), mmap_mode="r")
+                    Y_test01 = np.load(os.path.join(arrays_dir, "Y_test01.npy"), mmap_mode="r")
+                    X_train_pool = np.load(os.path.join(arrays_dir, "X_train_pool.npy"), mmap_mode="r")
+                    Y_train01_pool = np.load(os.path.join(arrays_dir, "Y_train01_pool.npy"), mmap_mode="r")
+                    w_train_pool = np.load(os.path.join(arrays_dir, "w_train_pool.npy"), mmap_mode="r")
+                    X_val_scaled = np.load(os.path.join(arrays_dir, "X_val_scaled.npy"), mmap_mode="r")
+                    Y_val_hold = np.load(os.path.join(arrays_dir, "Y_val_hold.npy"), mmap_mode="r")
+                    Y_val_hold01 = np.load(os.path.join(arrays_dir, "Y_val_hold01.npy"), mmap_mode="r")
+                    state_loaded = _load_preprocess_state_npz(preprocess_paths["state_npz"])
+                    coerce_state = {}
+                    if os.path.exists(preprocess_paths["state_json"]):
+                        with open(preprocess_paths["state_json"], "r") as _sf:
+                            _state_json = _json.load(_sf)
+                        coerce_state = _state_json.get("coerce_state", {}) or {}
+                    scaler, qt, pls, pca = _rebuild_preprocess_objects(
+                        scaler_state=state_loaded.get("scaler"),
+                        quantile_state=state_loaded.get("quantile"),
+                        pls_state=state_loaded.get("pls"),
+                        pca_state=state_loaded.get("pca"),
+                    )
+                    preprocess_loaded = True
+                    print(f"[PREPROCESS] Loaded cached artifact from {preprocess_root}")
+            except Exception as _exc:
+                print(f"[PREPROCESS] Failed to load cached artifact: {_exc}")
+
+    if not preprocess_loaded:
+        if preprocess_root:
+            print("[PREPROCESS] Cache miss; building preprocessing artifact.")
+        if path and os.path.exists(path):
+            if sample_size is None:
+                df = pd.read_csv(path, low_memory=False)
+            else:
+                # two-pass memory-efficient sampling
+                with open(path, "r") as f:
+                    num_lines = sum(1 for _ in f) - 1
+                k = min(int(sample_size), max(1, num_lines))
+                to_skip = sorted(_random.sample(range(1, num_lines + 1), num_lines - k))
+                df = pd.read_csv(path, skiprows=to_skip, low_memory=False)
+            print(f"Dataset loaded from {path}. Shape: {df.shape}")
         else:
-            # two-pass memory-efficient sampling
-            with open(path, "r") as f:
-                num_lines = sum(1 for _ in f) - 1
-            k = min(int(sample_size), max(1, num_lines))
-            to_skip = sorted(_random.sample(range(1, num_lines + 1), num_lines - k))
-            df = pd.read_csv(path, skiprows=to_skip, low_memory=False)
-        print(f"Dataset loaded from {path}. Shape: {df.shape}")
-    else:
-        # Fallback synthetic data for quick smoke test
-        n_rows = int(sample_size or 1000)
-        df = _synthesize(n_rows)
-        print(
-            f"Dataset file not found: {path}. Using synthetic data with shape {df.shape} for smoke test."
-        )
+            # Fallback synthetic data for quick smoke test
+            n_rows = int(sample_size or 1000)
+            df = _synthesize(n_rows)
+            print(
+                f"Dataset file not found: {path}. Using synthetic data with shape {df.shape} for smoke test."
+            )
 
     # Feature/label selection
     if not features or not label_col:
         raise ValueError("Both features and label must be specified via select(...)")
-    X = df[features]
-    y = df[label_col]
+    if not preprocess_loaded:
+        X = df[features]
+        y = df[label_col]
 
     # Define a train-fitted coercion that applies consistently to test to avoid leakage
     def _coerce_fit_apply(
@@ -420,88 +655,84 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         print(f"Label mapping ({label_name}) fallback lexicographic: positive='{pos}', negative='{neg}'")
         return (y_str == pos).astype(int)
 
-    # Make sure label is binary numeric {0,1}
-    y = _coerce_binary_label(y, label_col or "label")
-    print("Features and labels extracted.")
+    if not preprocess_loaded:
+        # Make sure label is binary numeric {0,1}
+        y = _coerce_binary_label(y, label_col or "label")
+        print("Features and labels extracted.")
 
-    # Split first (to avoid leakage), then coerce using train-fit, then optional PCA (fit on train)
-    test_size = float(tr_cfg.get("test_size", 0.2))
-    stratify = bool(tr_cfg.get("stratify", True))
-    stratify_y = y if stratify else None
-    split_seed = int(cfg.get("train", {}).get("seed", 42))
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=split_seed, stratify=stratify_y
-    )
-    print(f"Data split: X_train={X_train.shape}, X_test={X_test.shape}")
-
-    # Coercion fit on train, apply to test
-    X_train, X_test, coerce_state = _coerce_fit_apply(X_train, X_test)
-
-    # Track preprocessing pipeline components for persistence
-    qt = None
-    pls = None
-    pca = None
-
-    # Optional quantile uniformization (fit on train only)
-    q_cfg = cfg.get("dataset.quantile_uniform", None)
-    if q_cfg is not None:
-        from sklearn.preprocessing import QuantileTransformer
-        n_q = int(q_cfg.get("n_quantiles", min(1000, len(X_train))))
-        out_dist = q_cfg.get("output_distribution", "uniform")
-        qt = QuantileTransformer(
-            n_quantiles=n_q,
-            output_distribution=out_dist,
-            subsample=int(1e9),
-            random_state=42,
+    if not preprocess_loaded:
+        # Split first (to avoid leakage), then coerce using train-fit, then optional PCA (fit on train)
+        stratify_y = y if stratify else None
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=split_seed, stratify=stratify_y
         )
-        X_train = qt.fit_transform(X_train)
-        X_test = qt.transform(X_test)
+        print(f"Data split: X_train={X_train.shape}, X_test={X_test.shape}")
 
-    # Optional supervised dimensionality reduction to nearest power of two using PLS
-    pls_cfg = cfg.get("dataset.pls_pow2", None)
-    if pls_cfg is not None:
-        from sklearn.cross_decomposition import PLSRegression
-        import math as _math
-        d0 = X_train.shape[1]
-        max_power = d0.bit_length() - 1
-        max_qubits = pls_cfg.get("max_qubits")
-        if max_qubits is not None:
-            max_power = min(max_power, int(max_qubits))
-        target_dim = int(pls_cfg.get("components") or max(1, 2 ** max_power))
-        target_dim = max(1, min(target_dim, d0))
-        pls = PLSRegression(n_components=target_dim)
-        # Use {0,1} as response for classification
-        Y01_pls = (np.array(y_train.values) > 0).astype(int)
-        pls.fit(X_train, Y01_pls)
-        X_train = pls.transform(X_train)
-        X_test = pls.transform(X_test)
+        # Coercion fit on train, apply to test
+        X_train, X_test, coerce_state = _coerce_fit_apply(X_train, X_test)
 
-    # Optional PCA to a power-of-two feature count (useful for amplitude embedding), fit on train only
-    pca_cfg = cfg.get("dataset.pca_pow2", None)
-    if pca_cfg is not None:
-        max_qubits = pca_cfg.get("max_qubits")
-        import math as _math
-        d0 = X_train.shape[1]
-        max_power = d0.bit_length() - 1
-        if max_qubits is not None:
-            max_power = min(max_power, int(max_qubits))
-        target_dim = max(1, 2 ** max_power)
-        if target_dim != d0:
-            pca = PCA(n_components=target_dim, random_state=42)
-            X_train = pca.fit_transform(X_train)
-            X_test = pca.transform(X_test)
+        # Track preprocessing pipeline components for persistence
+        qt = None
+        pls = None
+        pca = None
 
-    # Scale
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    print(f"Features scaled. X_train_scaled shape={X_train_scaled.shape}, X_test_scaled shape={X_test_scaled.shape}")
+        # Optional quantile uniformization (fit on train only)
+        if q_cfg is not None:
+            from sklearn.preprocessing import QuantileTransformer
+            n_q = int(q_cfg.get("n_quantiles", min(1000, len(X_train))))
+            out_dist = q_cfg.get("output_distribution", "uniform")
+            qt = QuantileTransformer(
+                n_quantiles=n_q,
+                output_distribution=out_dist,
+                subsample=int(1e9),
+                random_state=42,
+            )
+            X_train = qt.fit_transform(X_train)
+            X_test = qt.transform(X_test)
 
-    # Labels to {-1, 1} and {0,1} (NumPy only)
-    Y_train = np.array(y_train.values * 2 - 1)
-    Y_test = np.array(y_test.values * 2 - 1)
-    Y_train01 = (Y_train > 0).astype(np.int32)
-    Y_test01 = (Y_test > 0).astype(np.int32)
+        # Optional supervised dimensionality reduction to nearest power of two using PLS
+        if pls_cfg is not None:
+            from sklearn.cross_decomposition import PLSRegression
+            import math as _math
+            d0 = X_train.shape[1]
+            max_power = d0.bit_length() - 1
+            max_qubits = pls_cfg.get("max_qubits")
+            if max_qubits is not None:
+                max_power = min(max_power, int(max_qubits))
+            target_dim = int(pls_cfg.get("components") or max(1, 2 ** max_power))
+            target_dim = max(1, min(target_dim, d0))
+            pls = PLSRegression(n_components=target_dim)
+            # Use {0,1} as response for classification
+            Y01_pls = (np.array(y_train.values) > 0).astype(int)
+            pls.fit(X_train, Y01_pls)
+            X_train = pls.transform(X_train)
+            X_test = pls.transform(X_test)
+
+        # Optional PCA to a power-of-two feature count (useful for amplitude embedding), fit on train only
+        if pca_cfg is not None:
+            max_qubits = pca_cfg.get("max_qubits")
+            import math as _math
+            d0 = X_train.shape[1]
+            max_power = d0.bit_length() - 1
+            if max_qubits is not None:
+                max_power = min(max_power, int(max_qubits))
+            target_dim = max(1, 2 ** max_power)
+            if target_dim != d0:
+                pca = PCA(n_components=target_dim, random_state=42)
+                X_train = pca.fit_transform(X_train)
+                X_test = pca.transform(X_test)
+
+        # Scale
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        print(f"Features scaled. X_train_scaled shape={X_train_scaled.shape}, X_test_scaled shape={X_test_scaled.shape}")
+
+        # Labels to {-1, 1} and {0,1} (NumPy only)
+        Y_train = np.array(y_train.values * 2 - 1)
+        Y_test = np.array(y_test.values * 2 - 1)
+        Y_train01 = (Y_train > 0).astype(np.int32)
+        Y_test01 = (Y_test > 0).astype(np.int32)
 
     # Optional export of the PLS-transformed, scaled dataset as seen by QML.
     # This runs after quantile + PLS + MinMax scaling and uses numbered feature
@@ -788,68 +1019,167 @@ def run(recipe: Recipe) -> Dict[str, Any]:
         and os.environ.get("EDGE_CPU_FUSE_EPOCHS", "1") != "0"
     )
     np_rng = np.random.default_rng(seed)
-    val_frac = float(tr_cfg.get("val_size", 0.1))
+    val_frac = val_frac_cfg
 
-    # Hold out a true validation split from training data for calibration/monitoring.
-    if (
-        0.0 < val_frac < 0.5
-        and len(X_train_scaled) >= 20
-        and len(np.unique(Y_train01)) >= 2
-    ):
-        X_fit_scaled, X_val_scaled, Y_fit, Y_val_hold, Y_fit01, Y_val_hold01 = train_test_split(
-            X_train_scaled,
-            Y_train,
-            Y_train01,
-            test_size=val_frac,
-            random_state=seed,
-            stratify=Y_train01,
-        )
-    else:
-        X_fit_scaled = X_train_scaled
-        Y_fit = Y_train
-        Y_fit01 = Y_train01
-        X_val_scaled = X_train_scaled
-        Y_val_hold = Y_train
-        Y_val_hold01 = Y_train01
+    if not preprocess_loaded:
+        # Hold out a true validation split from training data for calibration/monitoring.
+        if (
+            0.0 < val_frac < 0.5
+            and len(X_train_scaled) >= 20
+            and len(np.unique(Y_train01)) >= 2
+        ):
+            X_fit_scaled, X_val_scaled, Y_fit, Y_val_hold, Y_fit01, Y_val_hold01 = train_test_split(
+                X_train_scaled,
+                Y_train,
+                Y_train01,
+                test_size=val_frac,
+                random_state=seed,
+                stratify=Y_train01,
+            )
+        else:
+            X_fit_scaled = X_train_scaled
+            Y_fit = Y_train
+            Y_fit01 = Y_train01
+            X_val_scaled = X_train_scaled
+            Y_val_hold = Y_train
+            Y_val_hold01 = Y_train01
 
-    class_weights_mode = tr_cfg.get("class_weights", "balanced")
-    class_weights_map = None
-    if class_weights_mode == "balanced":
-        cls_labels = np.unique(Y_fit)
-        cls_weights_array = compute_class_weight(
-            class_weight="balanced", classes=cls_labels, y=Y_fit
-        )
-        class_weights_map = {int(label): float(weight) for label, weight in zip(cls_labels, cls_weights_array)}
-        print(f"Class weights: {class_weights_map}")
-    # Weights for {0,1} labels (for logistic loss)
-    class_weights01_map = None
-    if class_weights_mode == "balanced":
-        cls01 = np.unique(Y_fit01)
-        w01 = compute_class_weight(class_weight="balanced", classes=cls01, y=Y_fit01)
-        class_weights01_map = {int(label): float(weight) for label, weight in zip(cls01, w01)}
+        class_weights_mode = tr_cfg.get("class_weights", "balanced")
+        class_weights_map = None
+        if class_weights_mode == "balanced":
+            cls_labels = np.unique(Y_fit)
+            cls_weights_array = compute_class_weight(
+                class_weight="balanced", classes=cls_labels, y=Y_fit
+            )
+            class_weights_map = {int(label): float(weight) for label, weight in zip(cls_labels, cls_weights_array)}
+            print(f"Class weights: {class_weights_map}")
+        # Weights for {0,1} labels (for logistic loss)
+        class_weights01_map = None
+        if class_weights_mode == "balanced":
+            cls01 = np.unique(Y_fit01)
+            w01 = compute_class_weight(class_weight="balanced", classes=cls01, y=Y_fit01)
+            class_weights01_map = {int(label): float(weight) for label, weight in zip(cls01, w01)}
 
-    # Training pool (pad once so batch size and epoch batch tensor shapes stay constant)
-    X_train_pool = X_fit_scaled
-    Y_train_pool = Y_fit
-    Y_train01_pool = Y_fit01
-    if len(X_train_pool) < batch_size:
-        pad_count = batch_size - len(X_train_pool)
-        pad_idx = np_rng.integers(0, len(X_train_pool), pad_count)
-        X_train_pool = np.concatenate([X_train_pool, X_train_pool[pad_idx]], axis=0)
-        Y_train_pool = np.concatenate([Y_train_pool, Y_train_pool[pad_idx]], axis=0)
-        Y_train01_pool = np.concatenate([Y_train01_pool, Y_train01_pool[pad_idx]], axis=0)
-    rem = len(X_train_pool) % batch_size
-    if rem != 0:
-        pad_count = batch_size - rem
-        pad_idx = np_rng.integers(0, len(X_train_pool), pad_count)
-        X_train_pool = np.concatenate([X_train_pool, X_train_pool[pad_idx]], axis=0)
-        Y_train_pool = np.concatenate([Y_train_pool, Y_train_pool[pad_idx]], axis=0)
-        Y_train01_pool = np.concatenate([Y_train01_pool, Y_train01_pool[pad_idx]], axis=0)
-    if class_weights01_map:
-        w_train_pool = np.array([class_weights01_map[int(label)] for label in Y_train01_pool], dtype=np.float32)
-        w_train_pool *= len(w_train_pool) / w_train_pool.sum()  # normalize so mean == 1.0
-    else:
-        w_train_pool = np.ones((len(X_train_pool),), dtype=np.float32)
+        # Training pool (pad once so batch size and epoch batch tensor shapes stay constant)
+        X_train_pool = X_fit_scaled
+        Y_train_pool = Y_fit
+        Y_train01_pool = Y_fit01
+        if len(X_train_pool) < batch_size:
+            pad_count = batch_size - len(X_train_pool)
+            pad_idx = np_rng.integers(0, len(X_train_pool), pad_count)
+            X_train_pool = np.concatenate([X_train_pool, X_train_pool[pad_idx]], axis=0)
+            Y_train_pool = np.concatenate([Y_train_pool, Y_train_pool[pad_idx]], axis=0)
+            Y_train01_pool = np.concatenate([Y_train01_pool, Y_train01_pool[pad_idx]], axis=0)
+        rem = len(X_train_pool) % batch_size
+        if rem != 0:
+            pad_count = batch_size - rem
+            pad_idx = np_rng.integers(0, len(X_train_pool), pad_count)
+            X_train_pool = np.concatenate([X_train_pool, X_train_pool[pad_idx]], axis=0)
+            Y_train_pool = np.concatenate([Y_train_pool, Y_train_pool[pad_idx]], axis=0)
+            Y_train01_pool = np.concatenate([Y_train01_pool, Y_train01_pool[pad_idx]], axis=0)
+        if class_weights01_map:
+            w_train_pool = np.array([class_weights01_map[int(label)] for label in Y_train01_pool], dtype=np.float32)
+            w_train_pool *= len(w_train_pool) / w_train_pool.sum()  # normalize so mean == 1.0
+        else:
+            w_train_pool = np.ones((len(X_train_pool),), dtype=np.float32)
+
+        if preprocess_paths and preprocess_config_hash:
+            try:
+                import json as _json
+                arrays_dir = preprocess_paths["arrays_dir"]
+                os.makedirs(arrays_dir, exist_ok=True)
+                np.save(os.path.join(arrays_dir, "X_train_scaled.npy"), X_train_scaled)
+                np.save(os.path.join(arrays_dir, "X_test_scaled.npy"), X_test_scaled)
+                np.save(os.path.join(arrays_dir, "Y_train.npy"), Y_train)
+                np.save(os.path.join(arrays_dir, "Y_test.npy"), Y_test)
+                np.save(os.path.join(arrays_dir, "Y_train01.npy"), Y_train01)
+                np.save(os.path.join(arrays_dir, "Y_test01.npy"), Y_test01)
+                np.save(os.path.join(arrays_dir, "X_train_pool.npy"), X_train_pool)
+                np.save(os.path.join(arrays_dir, "Y_train01_pool.npy"), Y_train01_pool)
+                np.save(os.path.join(arrays_dir, "w_train_pool.npy"), w_train_pool)
+                np.save(os.path.join(arrays_dir, "X_val_scaled.npy"), X_val_scaled)
+                np.save(os.path.join(arrays_dir, "Y_val_hold.npy"), Y_val_hold)
+                np.save(os.path.join(arrays_dir, "Y_val_hold01.npy"), Y_val_hold01)
+
+                scaler_state = None
+                quantile_state = None
+                pls_state = None
+                pca_state = None
+                try:
+                    from sklearn.preprocessing import MinMaxScaler as _SkMinMax
+                    if isinstance(scaler, _SkMinMax):
+                        scaler_state = {
+                            "feature_range": getattr(scaler, "feature_range", (0, 1)),
+                            "min_": getattr(scaler, "min_", None),
+                            "scale_": getattr(scaler, "scale_", None),
+                            "data_min_": getattr(scaler, "data_min_", None),
+                            "data_max_": getattr(scaler, "data_max_", None),
+                            "data_range_": getattr(scaler, "data_range_", None),
+                            "n_samples_seen_": getattr(scaler, "n_samples_seen_", None),
+                        }
+                except Exception:
+                    pass
+                try:
+                    from sklearn.preprocessing import QuantileTransformer as _SkQuantile
+                    if isinstance(qt, _SkQuantile):
+                        quantile_state = {
+                            "n_quantiles": getattr(qt, "n_quantiles", None),
+                            "subsample": getattr(qt, "subsample", None),
+                            "output_distribution": getattr(qt, "output_distribution", None),
+                            "random_state": getattr(qt, "random_state", None),
+                            "n_quantiles_": getattr(qt, "n_quantiles_", None),
+                            "quantiles_": getattr(qt, "quantiles_", None),
+                            "references_": getattr(qt, "references_", None),
+                            "n_features_in_": getattr(qt, "n_features_in_", None),
+                        }
+                except Exception:
+                    pass
+                try:
+                    from sklearn.cross_decomposition import PLSRegression as _SkPLS
+                    if isinstance(pls, _SkPLS):
+                        pls_state = {
+                            "n_components": getattr(pls, "n_components", None),
+                            "x_mean_": getattr(pls, "x_mean_", None),
+                            "x_std_": getattr(pls, "x_std_", None),
+                            "x_weights_": getattr(pls, "x_weights_", None),
+                            "x_rotations_": getattr(pls, "x_rotations_", None),
+                            "n_features_in_": getattr(pls, "n_features_in_", None),
+                        }
+                except Exception:
+                    pass
+                try:
+                    from sklearn.decomposition import PCA as _SkPCA
+                    if isinstance(pca, _SkPCA):
+                        pca_state = {
+                            "n_components": getattr(pca, "n_components", None),
+                            "components_": getattr(pca, "components_", None),
+                            "mean_": getattr(pca, "mean_", None),
+                            "n_features_in_": getattr(pca, "n_features_in_", None),
+                        }
+                except Exception:
+                    pass
+
+                _save_preprocess_state_npz(
+                    preprocess_paths["state_npz"],
+                    scaler_state=scaler_state,
+                    quantile_state=quantile_state,
+                    pls_state=pls_state,
+                    pca_state=pca_state,
+                )
+                with open(preprocess_paths["state_json"], "w") as _sf:
+                    _json.dump({"coerce_state": coerce_state}, _sf)
+                with open(preprocess_paths["meta"], "w") as _mf:
+                    _json.dump(
+                        {
+                            "version": 1,
+                            "config_hash": preprocess_config_hash,
+                            "created_at": ts,
+                        },
+                        _mf,
+                    )
+                print(f"[PREPROCESS] Saved cached artifact to {preprocess_paths['root']}")
+            except Exception as _exc:
+                print(f"[PREPROCESS] Failed to save cached artifact: {_exc}")
     # Pre-scale once on host so the compiled quantum graph stays minimal.
     if enc_name in {"angle_embedding_y", "angle_pair_xy"}:
         if enc_cfg.get("angle_range") == "0_pi":

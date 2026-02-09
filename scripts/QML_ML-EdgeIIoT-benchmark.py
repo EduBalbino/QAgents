@@ -10,6 +10,13 @@ if __package__ in (None, ""):
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
 
+# Thread limits — must be set before numpy/jax/catalyst are imported.
+# Keeps each process lean so multiple W&B agents can run in parallel.
+_EDGE_THREADS = os.environ.get("EDGE_THREADS", "2")
+for _k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_k, _EDGE_THREADS)
+
 try:
     import wandb
 except Exception:
@@ -133,19 +140,23 @@ os.environ.setdefault("WANDB_API_HOST", WANDB_BASE_URL)
 os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS", "1")
 os.environ.setdefault("EDGE_ENFORCE_NO_PY_CALLBACK", "0")
 os.environ.setdefault("EDGE_PREFLIGHT_COMPILE", "1")
+# Reuse preprocessing artifact across sweep runs by default.
+os.environ.setdefault("EDGE_PREPROCESS_ARTIFACT", os.path.join(_ROOT, "cache", "edgeiiot-preprocess"))
 # CPU only: force a CPU-backed Lightning simulator.
 os.environ["QML_DEVICE"] = "lightning.qubit"
 _WANDB_SESSION_GROUP = f"edgeiiot-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
 _WANDB_LOGIN_OK: Optional[bool] = None
 
 # Default training / sweep hyperparameters (overridable via env or W&B sweeps)
-EDGE_FIXED_EPOCHS = 4
+EDGE_FIXED_EPOCHS = 2
 EDGE_DEFAULT_SAMPLE = 120000
 EDGE_DEFAULT_LR = 0.1
 EDGE_DEFAULT_BATCH = 64
 EDGE_DEFAULT_EPOCHS = EDGE_FIXED_EPOCHS
 EDGE_DEFAULT_CLASS_WEIGHTS = "balanced"
 EDGE_DEFAULT_SEED = 42
+# Keep preprocessing split stable across sweep seeds.
+os.environ.setdefault("EDGE_PREPROCESS_SPLIT_SEED", str(EDGE_DEFAULT_SEED))
 
 # ---------------------------
 # Phase A (fixed forever)
@@ -154,7 +165,7 @@ EDGE_DEFAULT_SEED = 42
 # stay comparable across time and compilation caching stays stable.
 
 PHASE_A_SAMPLE = 120000
-PHASE_A_EPOCHS = 3
+PHASE_A_EPOCHS = 2
 PHASE_A_SEEDS = [42, 1337]
 PHASE_A_LR_VALUES = [0.01, 0.04, 0.07, 0.10]
 
@@ -174,8 +185,8 @@ PHASE_A_ANGLE_MODES = [
     "scale_3.14159",
 ]
 
-PHASE_A_MEASUREMENTS = ["mean_z", "z0"]
-PHASE_A_LAYERS_RING = [1, 2, 3, 4, 5, 6, 7]
+PHASE_A_MEASUREMENTS = ["z0"]
+PHASE_A_LAYERS_RING = [1, 2, 3, 4, 5]
 PHASE_A_LAYERS_STRONGLY_ENTANGLING = [1, 2, 3]
 
 PHASE_A_RING_COUNT_DEFAULT = 80
@@ -299,7 +310,7 @@ def _wandb_project() -> str:
 
 
 def _wandb_entity() -> Optional[str]:
-    return os.environ.get("WANDB_ENTITY") or None
+    return os.environ.get("WANDB_ENTITY", "edubalbino")
 
 
 def _wandb_disabled() -> bool:
@@ -459,7 +470,9 @@ def run_one(sample: int,
                 },
                 allow_val_change=True,
             )
-            spec_artifact_path = f"spec-{spec_hash}.json"
+            spec_dir = "wandb_specs"
+            os.makedirs(spec_dir, exist_ok=True)
+            spec_artifact_path = os.path.join(spec_dir, f"spec-{spec_hash}.json")
             with open(spec_artifact_path, "w", encoding="utf-8") as f:
                 json.dump(cfg_payload, f, indent=2)
             artifact = wandb.Artifact(name=f"spec-{spec_hash}", type="experiment-spec")
@@ -595,7 +608,7 @@ def main() -> None:
 
     # Mean-Z readout across active wires.
     feats = _active_features()
-    measurement: Dict[str, Any] = {"name": "mean_z", "wires": list(range(len(feats)))} if feats else {"name": "z0", "wires": [0]}
+    measurement: Dict[str, Any] = {"name": "z0", "wires": [0]}
 
     # Grid of ansatz/layers, overridable via env lists
     anz_list = _env_list_str("EDGE_ANZ_LIST", ["ring_rot_cnot", "strongly_entangling"]) or [
@@ -771,6 +784,8 @@ def _build_phase_a_sweep_config(*, ansatz_name: str) -> Dict[str, Any]:
         "name": f"edgeiiot-phase-a-{ansatz_name}-sample{PHASE_A_SAMPLE}-b{EDGE_DEFAULT_BATCH}-e{PHASE_A_EPOCHS}",
         "method": "random",
         "metric": {"name": "objective", "goal": "maximize"},
+        "program": "scripts/QML_ML-EdgeIIoT-benchmark.py",
+        "command": ["${env}", "python", "${program}", "--sweep"],
         "parameters": {
             "phase": {"value": "phase_a"},
             "sample": {"value": PHASE_A_SAMPLE},
@@ -806,7 +821,7 @@ def _sweep_train() -> None:
     except Exception:
         pass
     feats = _active_features()
-    meas_name = str(getattr(cfg, "measurement", "mean_z"))
+    meas_name = str(getattr(cfg, "measurement", "z0"))
     meas = (
         {"name": "mean_z", "wires": list(range(len(feats)))}
         if (meas_name == "mean_z" and feats)
@@ -843,6 +858,13 @@ def _sweep_train() -> None:
     )
 
 
+def _create_sweep(ansatz_name: str, project: str, entity: str) -> str:
+    cfg = _build_phase_a_sweep_config(ansatz_name=ansatz_name)
+    sid = wandb.sweep(cfg, project=project, entity=entity)
+    print(f"[W&B] Created new sweep {sid}")
+    return sid
+
+
 def _run_sweeps_autorun() -> None:
     if _wandb_disabled():
         print("[INFO] W&B disabled; sweeps require W&B. Use EDGE_MODE=grid instead.")
@@ -857,19 +879,9 @@ def _run_sweeps_autorun() -> None:
     except Exception as exc:
         print(f"Cannot login to W&B: {exc}")
         return
-    # Create or reuse explore sweep
-    explore_id = os.environ.get("EDGE_EXPLORE_SWEEP_ID")
-    if not explore_id:
-        explore_cfg = _build_phase_a_sweep_config(ansatz_name="ring_rot_cnot")
-        explore_id = wandb.sweep(explore_cfg, project=project, entity=entity)
-    print(f"[W&B] Explore sweep id: {explore_id}")
+    explore_id = _create_sweep("ring_rot_cnot", project, entity)
     wandb.agent(explore_id, function=_sweep_train, count=explore_count)
-    # Create or reuse expand sweep
-    expand_id = os.environ.get("EDGE_EXPAND_SWEEP_ID")
-    if not expand_id:
-        expand_cfg = _build_phase_a_sweep_config(ansatz_name="strongly_entangling")
-        expand_id = wandb.sweep(expand_cfg, project=project, entity=entity)
-    print(f"[W&B] Expand sweep id: {expand_id}")
+    expand_id = _create_sweep("strongly_entangling", project, entity)
     wandb.agent(expand_id, function=_sweep_train, count=expand_count)
 
 
@@ -919,15 +931,13 @@ if __name__ == "__main__":
         project = _wandb_project()
         entity = _wandb_entity()
         if sys.argv[1] == "--phase-a-ring":
-            cfg = _build_phase_a_sweep_config(ansatz_name="ring_rot_cnot")
-            sweep_id = wandb.sweep(cfg, project=project, entity=entity)
-            print(f"[W&B] Phase A ring sweep id: {sweep_id}")
-            wandb.agent(sweep_id, function=_sweep_train, count=PHASE_A_RING_COUNT_DEFAULT)
+            sweep_id = _create_sweep("ring_rot_cnot", project, entity)
+            print(f"[W&B] Sweep id: {sweep_id}")
+            raise SystemExit(0)
         else:
-            cfg = _build_phase_a_sweep_config(ansatz_name="strongly_entangling")
-            sweep_id = wandb.sweep(cfg, project=project, entity=entity)
-            print(f"[W&B] Phase A strong sweep id: {sweep_id}")
-            wandb.agent(sweep_id, function=_sweep_train, count=PHASE_A_STRONG_COUNT_DEFAULT)
+            sweep_id = _create_sweep("strongly_entangling", project, entity)
+            print(f"[W&B] Sweep id: {sweep_id}")
+            raise SystemExit(0)
     elif mode == "grid":
         main()
     elif mode == "rf":
