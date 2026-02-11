@@ -1,0 +1,344 @@
+\chapter{Metodologia}
+\label{chap:metodologia}
+
+\section{Método proposto}
+Esse trabalho propõe uma abordagem baseada em um sistema de arquitetura multi-agente autônomos para a classificação inteligente de acessos maliciosos (ataques cibernéticos) ou acessos normais baseado na coleta, ou rastreio de pacotes de rede. O uso de agentes em tarefa de classificação envolvendo aplicações de cibersegurança tem aumentado muito, ainda mais com necessidade de respostas e tomada de decisão em tempo real.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figuras/QCyber-Fluxo tecnico_v2.png}
+    \caption{Diagrama de blocos da tomada de decisão da plataforma QCyber.}
+    \label{fig:arquitetura-sistema1}
+\end{figure}
+
+No estágio inicial da arquitetura como mostra a Figura \ref{fig:arquitetura-sistema1}, o sistema recebe as entradas do sistema no formato ".pact", pacotes de rede, que são normalizados e sincronizados temporalmente para evitar viés de amostragem entre fontes e convertidos em .csv para melhor modelagem. Esses dados são então encaminhados a um arranjo hierárquico de agentes no MAS – Binary. Dois Cyber Analysts independentes operam como avaliadores especializados que extraem atributos (estatísticos, temporais e semânticos) e emitem hipóteses preliminares sobre a natureza do evento. Um Cyber Specialist atua como agente de mediação e fusão, recebendo as hipóteses e agregando-as por regras de consenso (p. ex., voto ponderado por confiança, concordância Bayesiana ou stacking). O resultado é uma classificação binária, Attack ou Non-Attack, com intervalo de confiança associado, que funciona como primeiro filtro de qualidade: somente eventos classificados como ataque prosseguem para análise fina, reduzindo a carga computacional e o risco de false positives ao longo da cadeia.
+
+A segunda camada da Figura \ref{fig:arquitetura-sistema1}, MAS – Multiclass, realiza a especialização por tipo de ameaça a partir do conjunto já filtrado. Um Cyber Team Leader gerencia o balanceamento de carga e o routing para especialistas de domínio, preservando estado e contexto entre chamadas. Os agentes Cyber Specialist, mitm, ransomware, password, entre outros, compõem um ciclo de deliberação cooperativa: trocam evidências, ajustam crenças e refinam features latentes em iterações curtas (esboçadas pelas setas de realimentação). Esse mecanismo de coordenação permite capturar interdependências entre táticas (por exemplo, relação entre enumeração de serviços e credential stuffing) e mitigar ambiguidade entre classes próximas. Ao término da iteração, produz-se o conjunto de Filtered Attacks rotulado por categoria e prioridade, já com scores calibrados e explicações mínimas (ndicadores, regras acionadas e trechos de tráfego relevantes), pronto para acionar respostas proporcionais ao risco e ao impacto estimado.
+
+Por fim, a Ação do Agente implementa a política operacional que transforma diagnósticos em decisões. Um nó decisório verifica se a classe e o nível de confiança atendem a critérios pré-definidos (por exemplo, mitm, ddos\_tcp, port\_scanning acima de thresholds específicos ou sob condições ambientais, como horário e criticidade do ativo). Quando a condição é satisfeita, o sistema dispara o bloco Act, que pode incluir orquestrações automáticas (isolamento de host, rate limiting, rotação de credenciais, sinkholing de domínios) e notificações com playbooks padronizados para intervenção humana. A política respeita princípios de minimização de dano e auditabilidade: cada ação é registrada com traçabilidade do raciocínio multiagente, scores e artefatos de evidência, favorecendo post-mortems e continuous improvement do conjunto de regras, pesos de confiança e estratégias de coordenação entre especialistas. Essa integração entre triagem binária, classificação multiclasse e execução controlada estabelece uma linha de defesa adaptativa, escalável e cientificamente justificável.
+
+\section{Base de dados}
+A base de dados utilizada nesse trabalho foi construída a partir de um recorte IoT do ecossistema CIC-BCCC-NRC TabularIoTAttack-2024, consolidando três coleções principais: `CIC-BCCC-NRC-Edge-IIoTSet-2022`, `CIC-BCCC-NRC-IoT-2023-Original Training and Testing` e `CIC-BCCC-NRC-UQ-IOT-2022`. Entre essas, o Edge-IIoTset é uma das fontes centrais e descreve um cenário realista de cibersegurança em aplicações IoT/IIoT, concebido para avaliar sistemas de detecção de intrusões baseados em aprendizado de máquina. O testbed que o origina é estratificado em sete camadas (percepção IoT/IIoT, computação de borda, SDN, fog, blockchain, NFV e nuvem), integrando protocolos de referência (como thingsboard, mosquitto/MQTT, TCP/IP, ONOS, OPNFV, Hyperledger Sawtooth e gêmeos digitais) a fim de refletir requisitos operacionais de IoT/IIoT. Os dados foram gerados para além de 10 tipos de dispositivos (sensores de temperatura/umidade, ultrassônicos, nível d'água, pH, umidade do solo, frequência cardíaca, chama, entre outros) e anotados frente a múltiplos ataques.
+
+Os datasets de origem são disponibilizados em formatos distintos, de pacote (.pcap) e tabular (.csv). Devido a isso, podemos realizar a integração de datasets de diferentes origens, dado sua comum origem no formato (.pcap). Assim, podemos utilizar a metologia \it{CICflowMeter} para transformá-los em formato tabular (.csv) de similar formato. Portanto, temos os datasets mergidos, resultando no espaço de classes de 22 distintos rótulos de ataque e um total de 14.860.312 linhas. Após a harmonização das classes, a base final passou a ser descrita por um conjunto padronizado de atributos.
+
+Para melhor organização das nomenclaturas e explicação dos tipos de ataques, o Quadro~\ref{ref:quadroExplicacaoAtaque} foi elaborado. 
+
+\begin{table}[H]
+\centering
+\caption{Referência dos ataques e suas respectivas descrições}
+\label{ref:quadroExplicacaoAtaque}
+\begin{tabular}{|c|c|p{8.5cm}|}
+\hline
+\textbf{Ref.} & \textbf{Ataque} & \textbf{Descrição} \\
+\hline
+\hline
+A0  & Backdoor              & Acesso remoto não autorizado via porta ou código oculto. \\
+\hline
+A1  & DDoS\_HTTP            & Sobrecarga de servidor web com requisições HTTP para indisponibilizá‑lo. \\
+\hline
+A2  & DDoS\_ICMP            & Envio massivo de pacotes ICMP (ping) para saturar a rede do alvo. \\
+\hline
+A3  & DDoS\_TCP             & Consumo de recursos por flood de conexões/segmentos TCP. \\
+\hline
+A4  & DDoS\_UDP             & Flood de pacotes UDP destinado a esgotar largura de banda ou serviços. \\
+\hline
+A5  & Fingerprinting        & Coleta de informações sobre sistema/serviços para identificar vetores de ataque. \\
+\hline
+A6  & MIMT                  & Interceptação (e possível alteração) de comunicações entre duas partes. \\
+\hline
+A7  & Password              & Tentativas de obtenção de credenciais (força bruta, dicionário, engenharia social). \\
+\hline
+A8  & Ransomware            & Malware que cifra dados e exige resgate para recuperação. \\
+\hline
+A9  & SQL\_injection        & Inserção de código SQL malicioso para manipular ou extrair dados do BD. \\
+\hline
+A10 & Uploading             & Envio de arquivos maliciosos para comprometer sistemas ou executar código. \\
+\hline
+A11 & Port\_Scanning        & Varredura de portas para identificar serviços expostos e possíveis vulnerabilidades. \\
+\hline
+A12 & Vulnerability\_scanner& Ferramenta que detecta falhas conhecidas em sistemas ou aplicações. \\
+\hline
+A13 & XSS                   & Injeção de script malicioso em aplicações web para afetar navegadores de usuários. \\
+\hline
+A14 & Outras                & Categoria agregada para ataques fora do conjunto especialista. \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Pré-processamento da base de dados}
+
+Em uma primeira análise a base de dados passou por uma análise estatística descritiva e, a partir de seus resultados, foi entendido a necessidade de aplicar técnicas de limpeza de dados, pois muitas colunas apresentavam baixa variabilidade (variância nula ou praticamente nula), não interpretáveis, ou possuindo valores constantes, para todas as amostras. Segue as features removidas: \verb|protocol|, \verb|bwd.psh.flags|, \verb|fwd.urg.flags|, \verb|bwd.urg.flags|, \verb|packet.length.min|, \verb|urg.flag.count|, \verb|cwr.flag.count|, \verb|ece.flag.count|, \verb|fwd.bytes.bulk.avg|, \verb|fwd.packet.bulk.avg|, \verb|fwd.bulk.rate.avg|, \verb|active.std|, \verb|idle.std|.
+
+\subsubsection{Detecção outliers}
+
+A identificação de anomalias em informações operacionais do Edge-IIoTset é crucial para remover variações extremas legítimas que acontecem em contextos industriais, antes de implementar modelos para detectar ataques. Para essa finalidade, foram utilizados dois métodos que se complementam: o Z-score, que é um método estatístico univariado, e o algoritmo Isolation Forest, destinado à análise multivariada utilizando aprendizado de máquina não supervisionado.
+
+O Z-score ou Pontuação Padrão, uma medida numérica usada em estatística, é utilizada para avaliar a distância, em desvios padrão, entre um valor medido \( x \) e a média \( \mu \) da sua variável ~\cite{9754093}. O Z-score é demonstrado na Equação \ref{eq:zscore}. Valores cujo escore absoluto \( |Z| \) excede um limite estipulado são vistos como outliers.
+
+\begin{equation}
+Z = \frac{x - \mu}{\sigma}
+\label{eq:zscore}
+\end{equation}
+
+Onde, $x$ é o valor real de uma variável no conjunto de dados, $\mu$ é a média de todos os valores da variável analisada e o $\sigma$ mede a dispersão dos dados em torno da média.
+
+O \textit{Isolation Forest} é uma técnica para detectar anomalias baseada na premissa de que pontos anômalos podem ser isolados com maior facilidade do que pontos normais, por meio de divisões aleatórias nos dados. Essa abordagem constrói múltiplas árvores de decisão (\textit{isolation trees}) e determina a profundidade média \( E(h(x)) \) necessária para isolar cada elemento \( x \)~\cite{10673338,10575711}. A métrica que indica anomalias é dada pela Equação \ref{eq:iforest}. 
+
+\begin{equation}
+s(x, n) = 2^{-\frac{E(h(x))}{c(n)}}
+\label{eq:iforest}
+\end{equation}
+
+Onde \( c(n) \) representa o valor médio da profundidade para uma amostra com \( n \) pontos, calculado por \( c(n) = 2H(n - 1) - \frac{2(n - 1)}{n} \), sendo \( H(i) \) a série harmônica.
+
+\section{Algoritmos de Machine Learning}
+
+\subsection{Support Vector Machine (SVM)}
+O SVM (Support Vector Machine) é uma técnica de aprendizagem de máquina supervisionada, usada em especial para problemas de classificação\cite{svm1cortes1995}, seu objetivo matemático é encontrar o(s) hiperplano(s) (objeto matemático que divide um espaço n-dimensional em 2 lados) que dividem as classes de forma ótima. 
+
+Esse espaço n-dimensional é então construído de maneira inteligente (por exemplo, pré-processando os dados de entrada) para que suas relações sejam linearmente separáveis por essa divisão dentre as classes, ou superfície de decisão.
+
+A distância entre estes hiperplanos e o primeiro dado amostral de cada classe é chamado de \textit{Support Vector}, nomeando a técnica. Devido a necessidade da classificação prévia, torna-se a atividade mais trabalhosa, sendo necessário a criação de um banco de dados de treinamento razoavelmente completo e descrito.\cite{svm2cervantes2020}
+
+\subsection{Random Forest (RF)}
+
+O Random Forest, por sua natureza, é um método ensemble, ou seja, formado necessariamente por um número de dez à centenas de milhares de Decision Trees (Árvores de Decisão). Tomando como presunção fundamental de que cada uma de suas Árvores de Decisão é razoavelmente melhor que um chute aleatório, e possuem pouca correlação entre si, resulta-se uma alta probabilidade de um voto por maioria ser a classificação correta.
+
+Modelos de Random Forest construídos de forma razoável, promovendo sua diversidade (discorrelação entre si), possuem alto desempenho, de maneira competitiva a inúmeros outros métodos de aprendizagem de máquina\cite{randomforest2delgado2014}, sendo inclusive robustas à overfitting\cite{randomforest3breiman2001}.
+
+Por si, são modelos fundamentalmente "impenetráveis", como descrito pelo seu próprio autor. Entretanto, avanços recentes em explicabilidade tornam este um dos modelos clássicos com maiores vantagens para sua aplicação e subsquente compreensão.
+
+\subsection{k-Nearest Neighbors (kNN)}
+O kNN é uma generalização da classificação eficiente NN (Nearest Neighbor, ou vizinho mais próximo). Medimos a distância da amostra em teste com todas as amostras treinadas e previamente classificadas, sua classificação é então feita a partir da classificação dos "k" vizinhos.\cite{knn1naz2023} Essa abordagem necessariamente se divide em duas etapas, d'onde a etapa de treino se resume a determinar o número "k" eficiente para o banco de dados utilizado, bem como a métrica a ser utilizada para o espaço n dimensional formado pelas amostras.\cite{knn2cover1967} 
+
+Várias extensões foram desenvolvidas a tornar o algoritmo mais efetivo, buscando geralmente a forma mais rápida de encontrar os "k" vizinhos, mas também outras regras heurísticas são estudadas para melhor determinar a classificação em ambientes, por exemplo, com classes desbalanceadas\cite{knn3li2020}
+
+\subsection{Logistic Regression (LR)}
+A Logistic Regression (Regressão Logística) é uma abordagem fundamentalmente estatística, desenvolvida visando prever a probabilidade de eventos, saídas, ou no caso da classificação, a probabilidade de determinada amostra ser parte de uma classe.\cite{logistic1hosmer2000}
+
+O algoritmo é dependente na presunção de que existe uma relação linear entre as entradas e a probabilidade de pertencimento à uma determinada classe. Nesse sentido, em bancos de dados com alta dimensionalidade ou com relações fundamentalmente não-lineares podem apresentar dificuldade ou baixo desempenho.\cite{logistic2brzezinski}
+
+\subsection{Naive Bayes (NB)}
+O Naive Bayes (ou Bayes Ingênuo) é um método fundamentalmente probabilístico, baseado no Teorema de Bayes\cite{naivebayes1yang2018}. Se baseia no argumento de que o efeito de uma determinada entrada no pertencimento em uma classe, é independente de todas as outras entradas.
+
+Essa abordagem torna o algoritmo em um dos mais simples algoritmos de aprendizagem de máquina supervisionado, e consequentemente, alta performance. Entretanto, a presunção de independência é bastante improvável no mundo real.\cite{naivebayes2reddy2022}
+
+A maioria de suas extensões busca possibilitar que sua aplicação seja baseada em argumentos levemente diferentes (à respeito da distribuição, por exemplo) que são correspondentes ao banco de dados em estudo.\cite{naivebayes3ige2023}
+
+\section{Meta Learning}
+
+O campo do meta-aprendizado com foco na seleção e configuração de algoritmos vem crescendo em pesquisa desde 1976, começando com o trabalho seminal de Rice~\cite{10029537}. A meta-aprendizagem foca na identificação de padrões nos dados e na análise de como esses padrões afetam o comportamento dos algoritmos. Entretanto, pode ser abordada de várias formas e, por isso, possui diversas aplicações potenciais, como a seleção e recomendação de algoritmos de ML, descoberta de conhecimento, combinação de sistemas básicos de ML, controle do processo de aprendizagem e gerenciamento de vieses, além da transferência de metaconhecimento entre domínios~\cite{monteiro2021meta}.
+
+Nesta pesquisa, o meta-aprendizagem foi utilizado como uma abordagem para melhorar a habilidade de generalização dos modelos em relação a novos contextos de detecção de intrusões. Essa estratégia possibilita que o sistema crie mecanismos que acelerem a adaptação a variados tipos de ataques e a novos conjuntos de dados, mesmo quando há poucos exemplos disponíveis. Além disso, o meta learning ajuda a diminuir a necessidade de definir parâmetros de cada algoritmo, reduzindo a quantidade de ajustes repetitivos a cada novo treinamento. Desse modo, a aplicação dessa técnica melhora a escalabilidade da solução e também sua resistência à mudança dos contextos em rede e à evolução constante dos vetores atacantes.
+
+\section{Federate Learning}
+O aprendizado federado é introduzido pelo autor McMahan em seu trabalho \cite{mcmahan2017communication}, com uma simples premissa, porém muito inovadora. O aprendizado federado proposto pelo autor é motivado pelo treinamento descentralizado ou distribuído de modelos estatísticos. Essa técnica possibilita muitas alternativas de realização de treinamentos, ao permitir que usuários treinem localmente com os seus dados de maneira privada, ou seja, garantindo que o servidor, no qual hospeda o modelo principal, não tenha acesso a nenhum de seus dados, garantindo assim, a sua privacidade. 
+
+Propomos uma configuração reprodutível e de baixo custo computacional para treinamento distribuído, alicerçada no gerenciador de pacotes uv e em lockfiles determinísticos. Esse arranjo permite que usuários executem o pipeline localmente com o mesmo conjunto de dependências e versões, reduzindo divergências de ambiente e facilitando auditoria e repetibilidade dos resultados.
+
+Com o ambiente devidamente provisionado no cliente, um agente local orquestra o treinamento conforme políticas do usuário (como em casos em que só executa apenas quando houver ociosidade, carregamento e Wi-Fi) e sincroniza com os demais nós por meio da troca de atualizações de pesos. Forma-se, assim, uma malha federada de clientes treinando em paralelo. Ao final de cada rodada, os pesos locais são encaminhados ao agente no servidor, que agrega as contribuições e atualiza o modelo global para a próxima iteração.
+
+\section{Interpretabilidade}
+Nos desenvolvimentos mais recentes dos grandes modelos de linguagem, construção de centrais de computação (data centers) crescentes, temos, em aplicações reais, seguindo a influencial "Lição Amarga" (Bitter Lesson)\cite{Sutton2019BitterLesson},  modelo maiores, com desempenho cada vez melhores, e menos compreensíveis, otimizando suas saídas com detalhes cada vez mais complexos.
+
+Dá-se a necessidade do desenvolvimento do campo de xAI\cite{xai2019} (eXplainable Artificial Inteligence, ou inteligência artificial interpretada). Em áreas de grande risco, como medicina\cite{medicinexai2018} direito, finanças, a implantação de inteligência artificial é possível somente com aumentada transparência em suas previsões, possibilitando a análise da própria decisão tomada, pelos atores responsáveis pela atuação com base em seus resultados.
+
+O campo de xAI se divide em duas grandes áreas. Modelos que são, por si, interpretáveis, e modelos que são interpretado após seu treinamento (do latim, post-hoc, significando "após o fato")\cite{posthocxai2023}. o desenvolvimento 
+
+\subsection{SHAP}
+O SHAP (Shapley Additive exPlanations) é um desenvolvimento baseado em Teoria dos Jogos\cite{shap2017} para explicar a saída de um modelo de apredizagem de máquina (agnóstico ao modelo em específico), expandindo e otimizando\cite{fastershap2020} o Shapley e suas extensões para o campo de aprendizagem de máquina, realizando uma alocação ótima de crédito (ou responsabilidade) para os "jogadores", sejam esses pesos, árvores ou, como no caso explorado no presente trabalho, as entradas escolhidas, sejam essas arbitrárias ou determinadas pelos algoritmos de meta-learning.
+
+Na nossa sistemática multi-agentiva, uma vez que determinamos que um ataque foi determinado como ataque, precisamos retornar ao usuário final (através do relatório) os indicativos que tornou o caso em um incidente, isto é feito através da apresentação das 2 entradas que representaram maior anomalia nos acessos investigados.
+
+Na prática, isso transparece para o humano os artefatos incomuns, como em um ataque DDoS, no qual que uma porção de clientes possuem, de forma anômala, a mesma intenção, com os mesmos alvos. (Sendo esse ataque utilizado para sobrecarregar um servidor). Ou submissões de requisições com padrões erráticos de acesso que, a primeira vista, não transparecem indicações quaisquer de ataques cibernéticos.
+
+\section{Requisitos do Sistema}
+
+\subsection{Requisitos Funcionais}
+\begin{enumerate}[label=\textbf{RF\arabic*.}]
+    \item \textbf{Monitoramento e Detecção de Ameaças Cibernéticas com Quantum AI}
+    \begin{enumerate}[label=\arabic*.]
+        \item O sistema deve coletar dados de tráfego de rede e sensores de ambientes IoT e Fog Computing.
+        \item A detecção de anomalias deve ser realizada por meio de algoritmos de Machine Learning Quântico (QML), executados em uma plataforma de computação quântica em nuvem.
+        \item A previsão de ameaças deve ser baseada em características extraídas do dataset Edge-IIoTset.
+        \item O sistema deve aplicar o teorema de não clonagem (No-Cloning Theorem) para proteger contra interceptação de pacotes sensíveis.
+    \end{enumerate}
+
+    \item \textbf{Análise e Resposta a Ameaças via Agentes e LLM}
+    \begin{enumerate}[label=\arabic*.]
+        \item Utilizar um modelo LLM para interpretar dados contextuais de ameaças e gerar explicações para operadores humanos.
+        \item Orquestrar agentes inteligentes com LangGraph para análise e reação a ameaças.
+        \item Persistir o histórico de ações utilizando ferramentas como MemorySaver.
+        \item Permitir intervenção humana em decisões críticas (human-in-the-loop).
+    \end{enumerate}
+
+    \item \textbf{Registro, Auditoria e Geração de Relatórios}
+    \begin{enumerate}[label=\arabic*.]
+        \item Armazenar eventos em banco de dados auditável.
+        \item Gerar relatórios periódicos com estatísticas sobre ataques.
+        \item Permitir análise retrospectiva dos dados para requalificação dos modelos.
+    \end{enumerate}
+\end{enumerate}
+
+\subsection{Requisitos Funcionais da Interface do Usuário}
+\begin{enumerate}[label=\textbf{RF-UI\arabic*.}]
+    \item \textbf{Páginas de Autenticação e Cadastro}
+    \begin{enumerate}[label=\arabic*.]
+        \item O sistema deve apresentar uma página de autenticação com campos de usuário e senha.
+        \item Deve fornecer feedback visual para erros de login (ex: credenciais inválidas).
+        \item Deve permitir o cadastro de novos usuários com nome, e-mail, senha e tipo de perfil (ex: operador, administrador).
+        \item Validar campos obrigatórios e regras de senha segura.
+    \end{enumerate}
+
+    \item \textbf{Gerenciamento de Usuários e Perfil}
+    \begin{enumerate}[label=\arabic*.]
+        \item Somente usuários com permissão de administrador poderão acessar.
+        \item Deve permitir listar, editar, desativar ou excluir usuários.
+        \item Exibir status de atividade do usuário (ativo/inativo).
+        \item O sistema deve apresentar uma página de perfil acessível ao usuário autenticado.
+        \item Exibir informações básicas do usuário (nome, e-mail, tipo de perfil).
+        \item Permitir alteração de senha com validação da senha antiga.
+    \end{enumerate}
+
+    \item \textbf{Página de Monitoramento e Relatórios}
+    \begin{enumerate}[label=\arabic*.]
+        \item Exibir um menu principal com acesso às principais funcionalidades do sistema.
+        \item Exibir resumos rápidos, como número de alertas ativos e dispositivos conectados.
+        \item Permitir seleção de período e tipo de ataque.
+        \item Exibir gráficos interativos com frequência de ataques e dispositivos afetados.
+        \item Permitir exportação de relatórios em PDF.
+    \end{enumerate}
+\end{enumerate}
+
+\subsection{Requisitos Não Funcionais}
+\begin{enumerate}[label=\textbf{RNF\arabic*.}]
+    \item \textbf{Desempenho e Escalabilidade}
+    \begin{enumerate}[label=\arabic*.]
+        \item Garantir baixa latência entre módulos de IA quântica, LLMs e agentes.
+        \item Suportar múltiplos dispositivos IoT conectados simultaneamente.
+        \item Preparar módulos quânticos para ambientes híbridos (quântico + clássico).
+    \end{enumerate}
+
+    \item \textbf{Segurança e Privacidade}
+    \begin{enumerate}[label=\arabic*.]
+        \item Utilizar criptografia baseada em QRNG (Quantum Random Number Generator).
+        \item Garantir imutabilidade dos logs e acesso restrito.
+        \item Aplicar autenticação moderna com o princípio do menor privilégio.
+    \end{enumerate}
+
+    \item \textbf{Compatibilidade e Integração}
+    \begin{enumerate}[label=\arabic*.]
+        \item Compatibilidade com APIs de computação quântica (Qiskit, PennyLane, Cirq).
+        \item Integração via APIs REST com infraestruturas industriais.
+        \item Arquitetura modular e extensível.
+    \end{enumerate}
+
+    \item \textbf{Usabilidade}
+    \begin{enumerate}[label=\arabic*.]
+        \item Interface acessível, responsiva e adaptada a operadores de segurança.
+        \item Alertas devem incluir explicações interpretáveis geradas por LLMs.
+    \end{enumerate}
+
+    \item \textbf{Suporte à Comunicação em Tempo Real}
+    \begin{enumerate}[label=\arabic*.]
+        \item Suporte à comunicação em tempo real entre o backend e a interface para notificação de eventos críticos (ex: alertas de segurança, status de dispositivos).
+        \item Suporte a tecnologias como WebSocket ou SSE para comunicação eficiente.
+    \end{enumerate}
+\end{enumerate}
+
+
+
+%PEDROLANDIM%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+Este capítulo detalha a metodologia empregada na concepção e desenvolvimento dos componentes de infraestrutura, serviço e apresentação da plataforma qCyber. O trabalho foi segmentado em quatro pilares principais, cada um abordando uma faceta distinta da solução: a arquitetura do banco de dados, o desenvolvimento de um simulador para geração de dados de teste, a construção da API de serviço e a implementação da interface web para interação do usuário.
+
+\section{Arquitetura Geral da Solução}
+
+A solução foi projetada sob uma arquitetura de microsserviços, garantindo desacoplamento, escalabilidade e manutenibilidade dos componentes. Esta abordagem permite que cada parte do sistema evolua de forma independente. A arquitetura é composta por cinco módulos principais, cada um com uma responsabilidade bem definida. O primeiro é o Simulador de Sensor, componente responsável por gerar o fluxo de entrada de dados, emulando o comportamento de um sensor de rede. Em seguida, a API de Análise atua como um microsserviço de inteligência que recebe os dados brutos do simulador para realizar a classificação da ameaça. O Banco de Dados funciona como o repositório central e a única fonte de verdade, armazenando de forma persistente e estruturada todos os dados gerados e analisados. Intermediando o acesso a estes dados, a API Principal (Backend for Frontend) orquestra as consultas e formata as informações para serem consumidas pela camada final, a Interface Web, que é responsável pela apresentação visual e interação com o usuário.
+
+O fluxo de dados, ilustrado na Figura \ref{fig:arquitetura-sistema}, inicia-se no Simulador de Sensor, que transmite os eventos via requisição HTTP para a API de Análise. Após o processamento, esta API persiste os resultados no Banco de Dados. Subsequentemente, a API Principal consulta estas informações para alimentar a Interface Web, que apresenta os dados consolidados ao usuário final.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figuras/arquiteturaEinterface/arquitetura-sistema-mermaid.png}
+    \caption{Diagrama da arquitetura geral do sistema qCyber, evidenciando a comunicação entre os componentes.}
+    \label{fig:arquitetura-sistema}
+\end{figure}
+
+
+\section{Modelagem e Implementação do Banco de Dados}
+
+A persistência dos dados é um elemento central do sistema. A escolha da tecnologia e a modelagem da estrutura foram decisões fundamentais para garantir a integridade, consistência e performance das consultas, formando uma base de dados robusta e confiável.
+
+\subsection{Tecnologia Utilizada}
+
+Para o sistema de gerenciamento de banco de dados, optou-se pelo MySQL. A escolha foi motivada pela sua robustez, maturidade e ampla adoção no mercado, bem como pela natureza inerentemente relacional dos dados do projeto, que envolvem entidades interconectadas como dispositivos, detecções, incidentes e seus respectivos status. A conformidade do motor InnoDB com as propriedades ACID (Atomicidade, Consistência, Isolamento e Durabilidade) foi um fator crucial para assegurar a integridade transacional, indispensável para operações críticas de registro de segurança.
+
+\subsection{Estrutura Lógica}
+
+A arquitetura do banco de dados foi projetada para ser normalizada e escalável, evitando redundância e garantindo a consistência dos dados. A estrutura foi dividida em dois tipos principais de tabelas: Tabelas de Lookup e Tabelas Fato.
+
+As Tabelas de Lookup (ex: `enum\_tipo\_ataque` e `enum\_status\_resposta`) centralizam valores categóricos. Esta abordagem, em detrimento do uso do tipo `ENUM` nativo do MySQL, confere maior flexibilidade para a manutenção do sistema, permitindo que novas categorias sejam adicionadas ou existentes sejam modificadas através de simples inserções ou atualizações de registros, sem a necessidade de alterações estruturais no esquema (ALTER TABLE). Adicionalmente, esta modelagem permite a inclusão de metadados, como colunas de descrição, para enriquecer o contexto de cada categoria.
+
+As Tabelas Fato (ex: `deteccoes`, `incidentes\_analisados`, `dispositivos`) armazenam os registros transacionais e operacionais do sistema. A tabela `deteccoes` é o repositório central para cada evento bruto analisado, registrando a predição do modelo, o dispositivo associado e o status da resposta. A tabela `incidentes\_analisados` armazena os relatórios formais e enriquecidos, que são escalonados a partir de detecções que exigem análise aprofundada. A relação entre estas e as demais tabelas, que formam o núcleo lógico do sistema, é apresentada no diagrama da Figura \ref{fig:arquitetura-db}.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figuras/arquiteturaEinterface/arquitetura_db.png}
+    \caption{Diagrama de Entidade-Relacionamento do banco de dados `qcyber\_db`.}
+    \label{fig:arquitetura-db}
+\end{figure}
+
+
+\section{Desenvolvimento do Simulador de Sensor de Rede}
+
+Para validar a arquitetura ponta a ponta e permitir o desenvolvimento contínuo das camadas de serviço e apresentação, foi criado um simulador de sensor de rede. Este componente, desenvolvido como um script em Python, teve como propósito metodológico a geração de um fluxo de dados controlado, repetível e realista de eventos de segurança, permitindo a realização de testes de carga e de funcionalidade em todo o ecossistema da plataforma, desde a API de análise até a interface do usuário.
+
+Em um cenário de produção real, a captura de dados é um processo complexo. Tipicamente, sensores de rede, utilizando tecnologias como espelhamento de porta (SPAN) ou Network TAPs, capturam passivamente o tráfego de rede. Ferramentas de análise em tempo real, como o Suricata para detecção de assinaturas ou o Zeek para extração de metadados, inspecionam esse tráfego. Os alertas e logs gerados são então transmitidos, através de protocolos como Syslog ou IPFIX, para uma plataforma central de gerenciamento, como um SIEM (Security Information and Event Management). Nesse ambiente, os dados de múltiplas fontes são correlacionados para construir uma visão completa de um incidente de segurança.
+
+O simulador desenvolvido neste projeto atua como uma abstração deliberada desse processo. Em vez de replicar a captura e análise de pacotes de rede em tempo real, ele foi projetado para simular o \textit{resultado} desse processo, utilizando um conjunto de dados estático em formato CSV como ponto de partida. Esta abordagem metodológica foi adotada para cumprir um duplo objetivo fundamental. Primeiramente, ao fornecer um conjunto conhecido e controlado de vetores de ataque, o simulador serve como uma ferramenta de validação para a eficácia do sistema de detecção multiagente, permitindo avaliar a precisão e a performance da API de Análise de forma sistemática e repetível. Em segundo lugar, ele valida a robustez de toda a infraestrutura subsequente, garantindo que os componentes de persistência, serviço e apresentação são capazes de lidar de forma escalável com o volume e a frequência de dados que um sensor real produziria.
+
+O funcionamento do simulador é executado em uma sequência programada de operações. Inicialmente, a biblioteca Pandas é utilizada para carregar em memória o conjunto de dados de ataques a partir de um arquivo CSV. Em paralelo, o script emprega a biblioteca PyMySQL para estabelecer uma conexão com o banco de dados e executar uma consulta que retorna uma lista de identificadores de todos os dispositivos com status "Ativo". Com os dados e a lista de alvos disponíveis, o simulador itera sobre cada registro de ataque, selecionando aleatoriamente um dispositivo ativo para cada evento e estruturando um payload JSON que encapsula as `features' do ataque e o `device\_id' do alvo. Na etapa seguinte, a biblioteca `requests' é acionada para enviar este payload via requisição HTTP POST para o endpoint `/analisar' da API de Análise. Finalmente, para mimetizar a natureza esporádica de detecções em uma rede real, é introduzido um intervalo de tempo aleatório entre o envio de cada evento, uma função implementada com o auxílio das bibliotecas `time' e `random'.
+
+\section{Arquitetura da Camada de Apresentação e Serviço}
+
+A interação do usuário com os dados complexos do sistema é mediada por uma arquitetura desacoplada, composta por uma API de serviço (Backend) e uma interface de usuário (Frontend), garantindo que as responsabilidades de lógica de negócio e de apresentação permaneçam distintas.
+
+Para servir como a camada de serviço para a interface web, foi desenvolvida uma API RESTful utilizando o framework FastAPI em Python. A escolha do FastAPI foi justificada por um conjunto de características técnicas avançadas: sua alta performance para operações assíncronas de I/O, ideal para consultas a banco de dados; a utilização de tipagem de dados via Pydantic, que garante a validação de dados e reduz erros em tempo de execução; e, crucialmente, a geração automática de documentação interativa no padrão OpenAPI. Esta última funcionalidade acelerou significativamente o ciclo de desenvolvimento e testes, fornecendo um contrato claro e navegável da API.
+
+A API atua como um \textit{Backend for Frontend} (BFF), com a responsabilidade exclusiva de ler os dados já processados e persistidos no banco de dados, aplicando lógicas de negócio e formatação para consumo otimizado pela interface. A segurança de acesso aos dados é garantida pelo padrão OAuth2 com Bearer Tokens; todos os endpoints que manipulam dados sensíveis, com exceção das rotas públicas de autenticação, exigem um token válido, assegurando que apenas usuários autorizados possam interagir com o sistema.
+
+A estrutura de endpoints da API foi organizada modularmente para atender às diversas funcionalidades da aplicação. O módulo de Autenticação e Usuários provê as rotas para login (`/login/token`) e gerenciamento de perfis. Para a Gestão de Dispositivos, foram implementadas rotas CRUD (`/dispositivos`) que permitem a administração completa do parque de ativos. O núcleo de visualização é alimentado por um endpoint agregado para o Dashboard (`/dashboard/summary`), que consolida múltiplos KPIs em uma única chamada. Adicionalmente, a API oferece módulos para Consulta de Históricos e Relatórios (`/history/...`, `/report/...`), permitindo a filtragem granular de detecções. Por fim, um conjunto de endpoints de Administração (`/admin/...`) oferece rotas de acesso restrito para o gerenciamento de usuários e configurações do sistema.
+
+
+\section{Deploy dos serviços}
+Com o intuito de disponibilizar a aplicação para os stackholders, foi realizada uma implantação On-Premise, tendo em vista que instâncias em nuvem com placas de vídeo dedicadas trazem um custo mais elevado que instâncias comuns. Após uma bateria de testes que culminaram em uma release estável, um domínio foi compartilhado para acesso.
+
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.85\textwidth]{figuras/deploy-fig-3.pdf}
+    \caption{Fluxograma simplificado de acesso ao sistema.}
+    \label{fig:deploy}
+\end{figure}
+
+
+A fim de manter um fluxo de desenvolvimento adequado, a plataforma Docker foi empregada. Isso permitiu também que o backend se tornasse reprodutível. A figura \ref{fig:deploy} ilustra o fluxo de acesso após um stackholder acessar o domínio em questão.
+
+
+Abaixo seguem especificações do servidor utilizado:
+
+\begin{itemize}
+    \item \textbf{Sistema operacional:} Ubuntu 24.04.3;
+    \item \textbf{Processador:} 13th Gen Intel i7-13700 (24) @ 5.1GHz;
+    \item \textbf{GPU:} NVIDIA GeForce RTX 3060 Lite Hash Rate;
+    \item \textbf{RAM:}  31.03 GiB;
+    \item \textbf{Imagem Docker Python base}: python:3.12.11-slim.
+
+\end{itemize}

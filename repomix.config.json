@@ -29,13 +29,14 @@
   },
   "include": [
     "scripts/__init__.py",
-    "scripts/config.py",
-    "scripts/specs.py",
     "scripts/core/__init__.py",
     "scripts/core/builders.py",
     "scripts/core/compiler.py",
     "scripts/core/compiled_core.py",
     "scripts/QML_ML-EdgeIIoT-benchmark.py",
+    "classical/train_mergido.py",
+    "scripts/make_mergido_preprocessado.py",
+    "classical/Detecção_Avançada_de_Outliers_com_Isolation_Forest_e_Z_Scor.py"
   ],
   "ignore": {
     "useGitignore": true,

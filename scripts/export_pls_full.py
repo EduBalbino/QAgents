@@ -4,7 +4,7 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.preprocessing import QuantileTransformer, MinMaxScaler
+from sklearn.preprocessing import QuantileTransformer
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,26 +77,26 @@ def main() -> None:
 
     Xn = X.values
 
+    target_dim = max(1, min(int(args.components), Xn.shape[1]))
+    pls = PLSRegression(n_components=target_dim)
+    pls.fit(Xn, y01.values)
+    X_pls = pls.transform(Xn)
+
+    # Replace MinMax scaling: quantile-map PLS components to U[0,1] (bounded, uniform marginals).
     if not args.no_quantile:
-        n_q = min(1000, len(Xn))
+        n_q = min(1000, len(X_pls))
         qt = QuantileTransformer(
             n_quantiles=n_q,
             output_distribution="uniform",
             subsample=int(1e9),
             random_state=42,
         )
-        Xn = qt.fit_transform(Xn)
+        X_u01 = qt.fit_transform(X_pls)
+    else:
+        X_u01 = X_pls
 
-    target_dim = max(1, min(int(args.components), Xn.shape[1]))
-    pls = PLSRegression(n_components=target_dim)
-    pls.fit(Xn, y01.values)
-    X_pls = pls.transform(Xn)
-
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    X_scaled = scaler.fit_transform(X_pls)
-
-    feat_cols = [f"PC_{i+1}" for i in range(X_scaled.shape[1])]
-    out_df = pd.DataFrame(X_scaled, columns=feat_cols)
+    feat_cols = [f"PC_{i+1}" for i in range(X_u01.shape[1])]
+    out_df = pd.DataFrame(X_u01, columns=feat_cols)
     out_df[args.label] = y01.values
     out_df.to_csv(args.out, index=False)
     print(

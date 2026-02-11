@@ -10,6 +10,252 @@ if __package__ in (None, ""):
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
 
+# ---------------------------
+# Embedded spec helpers
+# ---------------------------
+# Folded from the former `scripts/specs.py` to reduce module sprawl and keep
+# the benchmark script self-contained.
+from dataclasses import asdict, dataclass
+import hashlib
+import platform
+import subprocess
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+# Keep this aligned with scripts/core/compiled_core.py supported encoders.
+ALLOWED_ENCODERS = {
+    "angle_embedding_y",
+    "angle_pair_xy",
+    "amplitude_embedding",
+}
+ALLOWED_ANZ = {"ring_rot_cnot", "strongly_entangling"}
+ALLOWED_MEASUREMENTS = {"mean_z", "mean_z_readout", "z0", "z_vec"}
+
+
+@dataclass(frozen=True)
+class EncoderCfg:
+    name: str
+    hadamard: bool = False
+    reupload: bool = False
+    angle_range: Optional[str] = None
+    angle_scale: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class AnsatzCfg:
+    name: str
+    layers: int
+
+
+@dataclass(frozen=True)
+class MeasurementCfg:
+    name: str
+    wires: List[int]
+
+
+@dataclass(frozen=True)
+class DataCfg:
+    path: str
+    features: List[str]
+    sample: int
+
+
+@dataclass(frozen=True)
+class TrainCfg:
+    lr: float
+    batch: int
+    epochs: int
+    seed: int
+    class_weights: str
+
+
+@dataclass(frozen=True)
+class ExperimentSpec:
+    schema_version: int
+    encoder: EncoderCfg
+    ansatz: AnsatzCfg
+    measurement: MeasurementCfg
+    data: DataCfg
+    train: TrainCfg
+    meta: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def hash(self) -> str:
+        payload = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(payload.encode()).hexdigest()[:10]
+
+
+class SpecValidator(BaseModel):
+    schema_version: int = Field(ge=1)
+    encoder: Dict[str, Any]
+    ansatz: Dict[str, Any]
+    measurement: Dict[str, Any]
+    data: Dict[str, Any]
+    train: Dict[str, Any]
+    meta: Dict[str, Any]
+
+    @field_validator("encoder")
+    @classmethod
+    def _encoder_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if v.get("name") not in ALLOWED_ENCODERS:
+            raise ValueError(f"encoder.name must be one of {sorted(ALLOWED_ENCODERS)}")
+        return v
+
+    @field_validator("ansatz")
+    @classmethod
+    def _ansatz_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if v.get("name") not in ALLOWED_ANZ:
+            raise ValueError(f"ansatz.name must be one of {sorted(ALLOWED_ANZ)}")
+        layers = v.get("layers")
+        if layers is None or layers < 1:
+            raise ValueError("ansatz.layers must be >= 1")
+        return v
+
+    @field_validator("measurement")
+    @classmethod
+    def _measurement_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        name = v.get("name")
+        wires = v.get("wires")
+        if name not in ALLOWED_MEASUREMENTS:
+            raise ValueError(f"measurement.name must be one of {sorted(ALLOWED_MEASUREMENTS)}")
+        if not isinstance(wires, list) or not all(isinstance(w, int) for w in wires):
+            raise ValueError("measurement.wires must be a list of integers")
+        return v
+
+    @field_validator("data")
+    @classmethod
+    def _data_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        sample = v.get("sample")
+        features = v.get("features", []) or []
+        # sample == 0 means "full dataset" (no sampling); >=1 means "exact sample size".
+        if sample is None or int(sample) < 0:
+            raise ValueError("data.sample must be >= 0 (0 means full dataset)")
+        if not isinstance(features, list) or not all(isinstance(f, str) for f in features):
+            raise ValueError("data.features must be a list of feature names")
+        if len(features) == 0:
+            raise ValueError("data.features must not be empty")
+        return v
+
+    @field_validator("train")
+    @classmethod
+    def _train_ok(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        lr = v.get("lr")
+        batch = v.get("batch")
+        epochs = v.get("epochs")
+        if lr is None or float(lr) <= 0:
+            raise ValueError("train.lr must be > 0")
+        if batch is None or int(batch) < 1:
+            raise ValueError("train.batch must be >= 1")
+        if epochs is None or int(epochs) < 1:
+            raise ValueError("train.epochs must be >= 1")
+        return v
+
+
+def build_and_validate_spec(**kwargs: Any) -> tuple[ExperimentSpec, str]:
+    spec = ExperimentSpec(**kwargs)
+    try:
+        SpecValidator.model_validate(spec.to_dict())
+    except ValidationError as exc:
+        raise ValueError(f"Spec invalid: {exc}") from exc
+    return spec, spec.hash()
+
+
+def flatten(d: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key, value in d.items():
+        compound_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            out.update(flatten(value, compound_key))
+        else:
+            out[compound_key] = value
+            if isinstance(value, list):
+                out[f"{compound_key}__len"] = len(value)
+    return out
+
+
+def _md5(path: str, block_size: int = 1 << 20) -> Optional[str]:
+    if not path or not os.path.exists(path):
+        return None
+    digest = hashlib.md5()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(block_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def provenance(spec: ExperimentSpec) -> Dict[str, Any]:
+    data_path = spec.data.path
+    data_info: Dict[str, Any] = {
+        "path": data_path,
+        "exists": os.path.exists(data_path),
+        "sample": spec.data.sample,
+        "features": spec.data.features,
+    }
+    data_info["md5"] = _md5(data_path)
+    try:
+        data_info["size_bytes"] = os.path.getsize(data_path)
+    except OSError:
+        data_info["size_bytes"] = None
+
+    try:
+        git_rev = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        git_rev = None
+    try:
+        dirty = subprocess.call(["git", "diff", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0
+    except Exception:
+        dirty = None
+
+    return {
+        "data": data_info,
+        "code": {
+            "git_commit": git_rev,
+            "git_dirty": dirty,
+        },
+        "env": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+        },
+    }
+
+
+def compliance_from_summary(spec: ExperimentSpec, summary: Dict[str, Any]) -> Dict[str, Any]:
+    diff: Dict[str, Any] = {}
+    expected_qubits = len(spec.data.features)
+    actual_qubits = summary.get("circuit_qubits") or summary.get("num_qubits") or expected_qubits
+    if actual_qubits != expected_qubits:
+        diff["qubits_mismatch"] = {"expected": expected_qubits, "actual": actual_qubits}
+    ok = len(diff) == 0
+    return {"ok": ok, "diff": diff}
+
+
+def build_feature_manifest(spec: ExperimentSpec, summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    features = spec.data.features
+    used_features = summary.get("used_features")
+    if isinstance(used_features, dict):
+        used_set = {str(k) for k in used_features.keys()}
+    elif isinstance(used_features, list):
+        used_set = {str(f) for f in used_features}
+    else:
+        used_set = {feature for feature in features}
+    pca_map = summary.get("pca_index_map", {})
+    manifest: List[Dict[str, Any]] = []
+    for idx, feature in enumerate(features):
+        manifest.append(
+            {
+                "feature": feature,
+                "original_index": idx,
+                "selected": int(feature in used_set or str(idx) in used_set),
+                "post_pca_index": pca_map.get(idx),
+            }
+        )
+    return manifest
+
 # By default, do not force BLAS/OpenMP thread caps. This prevents stale
 # shell-exported limits (e.g., OMP_NUM_THREADS=2) from throttling sweeps.
 if os.environ.get("EDGE_USE_ALL_THREADS", "1") != "0":
@@ -34,24 +280,13 @@ from scripts.core.builders import (
     device,
     encoder,
     ansatz,
+    measurement,
     train,
     save,
     run,
     rf_baseline,
     quantile_uniform,
     pls_to_pow2,
-)
-from scripts.specs import (
-    AnsatzCfg,
-    DataCfg,
-    EncoderCfg,
-    MeasurementCfg,
-    TrainCfg,
-    build_and_validate_spec,
-    build_feature_manifest,
-    compliance_from_summary,
-    flatten,
-    provenance,
 )
 
 
@@ -72,42 +307,28 @@ def objective(m: Dict[str, float]) -> float:
     return float(out)
 
 
-EDGE_DATASET = os.environ.get("EDGE_DATASET", "data/ML-EdgeIIoT-dataset-binario.csv")
-# Focused TCP feature set for compact PLS training.
-# Attack_label remains the target label.
-EDGE_FEATURES = [
-    "tcp.ack",
-    "tcp.ack_raw",
-    "tcp.checksum",
-    "tcp.dstport",
-    "tcp.flags",
-    "tcp.flags.ack",
-    "tcp.seq",
-]
+EDGE_DATASET = os.environ.get("EDGE_DATASET", "data/processed/mergido_preprocessado.csv")
+# Derived dataset already contains 8 leakage-safe PLS components (PC_1..PC_8).
+EDGE_FEATURES = [f"PC_{i}" for i in range(1, 9)]
 EDGE_LABEL = os.environ.get("EDGE_LABEL", "Attack_label")
 
 WANDB_BASE_URL = "https://wandb.balbino.io"
 os.environ.setdefault("WANDB_BASE_URL", WANDB_BASE_URL)
 os.environ.setdefault("WANDB_HOST", WANDB_BASE_URL)
 os.environ.setdefault("WANDB_API_HOST", WANDB_BASE_URL)
-os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS", "1")
-os.environ.setdefault("EDGE_ENFORCE_NO_PY_CALLBACK", "0")
 os.environ.setdefault("EDGE_PREFLIGHT_COMPILE", "1")
-os.environ.setdefault("EDGE_CPU_FUSE_EPOCHS_CHUNK", "5")
-# Reuse preprocessing artifact across sweep runs by default.
-os.environ.setdefault("EDGE_PREPROCESS_ARTIFACT", os.path.join(_ROOT, "cache", "edgeiiot-preprocess"))
-# CPU only: force a CPU-backed Lightning simulator.
-os.environ["QML_DEVICE"] = "lightning.qubit"
+# Default to CPU-backed Lightning simulator, but allow user/sweep overrides.
+os.environ.setdefault("QML_DEVICE", "lightning.qubit")
 _WANDB_SESSION_GROUP = f"edgeiiot-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
 _WANDB_LOGIN_OK: Optional[bool] = None
 
 # Default training / sweep hyperparameters (overridable via env or W&B sweeps)
 EDGE_FIXED_EPOCHS = 4
-EDGE_DEFAULT_SAMPLE = 120000
-EDGE_DEFAULT_LR = 0.05
+EDGE_DEFAULT_SAMPLE = 0
+EDGE_DEFAULT_LR = 0.01
 EDGE_DEFAULT_BATCH = 64
 EDGE_DEFAULT_EPOCHS = EDGE_FIXED_EPOCHS
-EDGE_DEFAULT_CLASS_WEIGHTS = "balanced"
+EDGE_DEFAULT_CLASS_WEIGHTS = "none"
 EDGE_DEFAULT_SEED = 42
 # Keep preprocessing split stable across sweep seeds.
 os.environ.setdefault("EDGE_PREPROCESS_SPLIT_SEED", str(EDGE_DEFAULT_SEED))
@@ -121,16 +342,18 @@ os.environ.setdefault("EDGE_PREPROCESS_SPLIT_SEED", str(EDGE_DEFAULT_SEED))
 PHASE_A_SAMPLE = 120000
 PHASE_A_EPOCHS = 20
 PHASE_A_SEEDS = [42, 1337, 2024]
-PHASE_A_LR_VALUES = [0.05]
+PHASE_A_LR_VALUES = [0.01]
 
 PHASE_A_ENC_NAMES = [
     "angle_embedding_y",
 ]
 # "angle_mode" is interpreted by _enc_opts_from_cfg:
 # - range_0_pi -> angle_range=0_pi
+# - range_pm_pi -> angle_range=pm_pi        (theta = 2*pi*(u-0.5))
+# - range_pm_pi_2 -> angle_range=pm_pi_2    (theta = pi*(u-0.5))
 # - scale_X    -> angle_scale=float(X)
 PHASE_A_ANGLE_MODES = [
-    "scale_0.5",
+    "range_pm_pi",
 ]
 
 PHASE_A_MEASUREMENTS = ["z0"]
@@ -143,15 +366,17 @@ PHASE_A_STRONG_COUNT_DEFAULT = 60
 EXPLORE_COUNT_DEFAULT = 8
 EXPAND_COUNT_DEFAULT = 16
 
-BENCHMARK_DEFAULT_SAMPLE = 60000
+# Default benchmark run should use the full dataset (no sampling).
+# Use <=0 to mean "no sampling" and pass sample_size=None into the DSL.
+BENCHMARK_DEFAULT_SAMPLE = 0
 
 # Limit number of features to a feasible qubit count for simulators
-# Configurable via EDGE_NUM_FEATURES env (default 8)
+# Configurable via EDGE_NUM_FEATURES env (default: all EDGE_FEATURES).
 def _active_features() -> List[str]:
     try:
-        n = int(os.environ.get("EDGE_NUM_FEATURES", "8"))
+        n = int(os.environ.get("EDGE_NUM_FEATURES", str(len(EDGE_FEATURES))))
     except Exception:
-        n = 8
+        n = len(EDGE_FEATURES)
     n = max(1, min(n, len(EDGE_FEATURES)))
     return EDGE_FEATURES[:n]
 
@@ -201,51 +426,102 @@ def _env_float(name: str, default: float) -> float:
 
 def _default_train_params(seed: int) -> Dict[str, Any]:
     """
-    Base training hyperparameters, with env overrides for easy tuning:
-    - EDGE_LR
-    - EDGE_CLASS_WEIGHTS
+    Hardcoded training hyperparameters for benchmark runs.
     """
     return {
-        "lr": _env_float("EDGE_LR", EDGE_DEFAULT_LR),
+        "lr": EDGE_DEFAULT_LR,
         "batch": EDGE_DEFAULT_BATCH,
         "epochs": EDGE_DEFAULT_EPOCHS,
-        "class_weights": os.environ.get("EDGE_CLASS_WEIGHTS", EDGE_DEFAULT_CLASS_WEIGHTS),
+        "class_weights": EDGE_DEFAULT_CLASS_WEIGHTS,
         "seed": seed,
+        "test_size": 0.2,
+        "stratify": True,
+        # Keep train batches roughly class-balanced; val/test remain untouched.
+        "balanced_batches": True,
+        "balanced_pos_frac": 0.5,
+        # Sane defaults for stability/precision.
+        "lr_schedule": "onecycle_cosine",
+        "onecycle_pct_start": 0.3,
+        "onecycle_div_factor": 25.0,
+        "onecycle_final_div_factor": 10000.0,
+        "weight_decay": 0.001,
+        "focal_gamma": 2.0,
+        # Selection policy: maximize precision subject to bacc>=0.8.
+        "val_objective": "prec_at_bacc",
+        "min_bacc": 0.8,
+        # Degeneracy guardrails for threshold search/selection.
+        "min_pred_pos_rate": 0.01,
+        "max_pred_pos_rate": 0.99,
+        "abort_on_degen": True,
     }
 
 
-def build_recipe(sample: int,
-                 enc_name: str,
-                 enc_opts: Dict[str, Any],
-                 layers: int,
-                 meas: Dict[str, Any],
-                 anz_name: str,
-                 seed: int,
-                 train_params: Optional[Dict[str, Any]] = None) -> Recipe:
-    # Use selected raw features; supervised PLS will reduce to 7 components
-    feats = EDGE_FEATURES
+def build_recipe(
+    sample: Optional[int],
+    enc_name: str,
+    enc_opts: Dict[str, Any],
+    layers: int,
+    meas: Dict[str, Any],
+    anz_name: str,
+    seed: int,
+    *,
+    features: Optional[List[str]] = None,
+    train_params: Optional[Dict[str, Any]] = None,
+) -> Recipe:
+    # Always drive the recipe feature selection from the same "active features"
+    # that get embedded into the spec, so qubit count and compliance stay consistent.
+    feats = list(features) if features else _active_features()
     tp: Dict[str, Any] = _default_train_params(seed)
     if train_params:
         tp |= {
             k: train_params[k]
-            for k in ("lr", "batch", "epochs", "class_weights", "seed", "test_size", "stratify")
+            for k in (
+                "lr",
+                "batch",
+                "epochs",
+                "class_weights",
+                "seed",
+                "test_size",
+                "stratify",
+                "balanced_batches",
+                "balanced_pos_frac",
+                "lr_schedule",
+                "onecycle_pct_start",
+                "onecycle_div_factor",
+                "onecycle_final_div_factor",
+                "weight_decay",
+                "focal_gamma",
+                "val_objective",
+                "min_bacc",
+                "min_pred_pos_rate",
+                "max_pred_pos_rate",
+                "abort_on_degen",
+                # Fast-run / micro-ablation knobs (consumed by scripts/core/builders.py)
+                "fixed_num_batches",
+                "preflight_compile",
+                "eval_every_epochs",
+                "weight_decay_ro",
+                "lr_mult_w_ro",
+                "lr_mult_alpha",
+                "alpha_train",
+            )
             if k in train_params
         }
-    # Use train-fitted quantile mapping and supervised PLS to 7 components for QML
     r = Recipe() | csv(EDGE_DATASET, sample_size=sample) | select(feats, label=EDGE_LABEL)
-    r = r | quantile_uniform()
-    r = r | pls_to_pow2(components=7)
-    dev_name = os.environ.get("QML_DEVICE", "lightning.qubit")
+    # mergido_preprocessado.csv already contains quantile-mapped PLS components (PC_1..PC_8).
+    # Don't apply quantile/PLS again.
+    if not (os.path.basename(str(EDGE_DATASET)) == "mergido_preprocessado.csv" or all(str(f).startswith("PC_") for f in feats)):
+        r = r | quantile_uniform()
+        r = r | pls_to_pow2(components=max(1, len(feats)))
     r = (
         r
-        | device(dev_name, wires_from_features=True)
+        | device("lightning.qubit", wires_from_features=True)
         | encoder(enc_name, **enc_opts)
         | ansatz(anz_name, layers=layers)
+        | measurement(str(meas.get("name")), list(meas.get("wires") or []))
         | train(**tp)
     )
-    # Embedding receives 7 PLS components, no PCA insertion needed
-    # Insert measurement as a trailing step for builders.run to pick up
-    r.parts.append(type(r.parts[0])(kind="measurement", params=meas))
+    # Embedding receives exactly len(feats) features.
     return r
 
 
@@ -329,7 +605,7 @@ def _wandb_ensure_login(force: bool = False) -> None:
         )
 
 
-def run_one(sample: int,
+def run_one(sample: Optional[int],
             enc_name: str,
             enc_opts: Dict[str, Any],
             layers: int,
@@ -345,9 +621,40 @@ def run_one(sample: int,
     active_features = _active_features()
     tp: Dict[str, Any] = _default_train_params(seed)
     if train_params:
+        # Allow overriding the full training surface area so A/B grids are real.
         tp |= {
             k: train_params[k]
-            for k in ("lr", "batch", "epochs", "class_weights", "seed", "test_size", "stratify")
+            for k in (
+                "lr",
+                "batch",
+                "epochs",
+                "class_weights",
+                "seed",
+                "test_size",
+                "stratify",
+                "balanced_batches",
+                "balanced_pos_frac",
+                "lr_schedule",
+                "onecycle_pct_start",
+                "onecycle_div_factor",
+                "onecycle_final_div_factor",
+                "weight_decay",
+                "focal_gamma",
+                "val_objective",
+                "min_bacc",
+                "min_pred_pos_rate",
+                "max_pred_pos_rate",
+                "abort_on_degen",
+                # QML-specific knobs (consumed by scripts/core/builders.py)
+                "alpha_mode",
+                "fixed_num_batches",
+                "preflight_compile",
+                "eval_every_epochs",
+                "weight_decay_ro",
+                "lr_mult_w_ro",
+                "lr_mult_alpha",
+                "alpha_train",
+            )
             if k in train_params
         }
     spec, spec_hash = build_and_validate_spec(
@@ -361,7 +668,8 @@ def run_one(sample: int,
         ),
         ansatz=AnsatzCfg(name=anz_name, layers=layers),
         measurement=measurement_cfg,
-        data=DataCfg(path=EDGE_DATASET, features=active_features, sample=sample),
+        # Spec carries a stable integer; use 0 to represent "full dataset" (no sampling).
+        data=DataCfg(path=EDGE_DATASET, features=active_features, sample=(0 if sample is None else int(sample))),
         train=TrainCfg(lr=float(tp["lr"]), batch=int(tp["batch"]), epochs=int(tp["epochs"]), seed=int(tp["seed"]), class_weights=str(tp["class_weights"])),
         meta={"device": os.environ.get("QML_DEVICE", "lightning.qubit"), "env": _resolved_envs()},
     )
@@ -431,7 +739,17 @@ def run_one(sample: int,
             print(f"Failed to register spec for run '{run_name}': {exc}")
 
     # Build base recipe (data → quantile/PLS → device/encoder/ansatz/train)
-    recipe = build_recipe(sample, enc_name, enc_opts, layers, meas, anz_name, seed, train_params=tp)
+    recipe = build_recipe(
+        sample,
+        enc_name,
+        enc_opts,
+        layers,
+        meas,
+        anz_name,
+        seed,
+        features=active_features,
+        train_params=tp,
+    )
     # Always persist trained models for this run; use spec hash for stable, unique names.
     model_dir = os.environ.get("EDGE_MODEL_DIR", "models")
     model_name = f"edgeiiot_{enc_name}_{anz_name}_L{layers}_s{seed}_{spec_hash}.pt"
@@ -538,7 +856,7 @@ def run_one(sample: int,
     return out
 
 
-def _benchmark_worker(payload: Tuple[int, int, str, Dict[str, Any], str, Dict[str, Any], int]):
+def _benchmark_worker(payload: Tuple[Optional[int], int, str, Dict[str, Any], str, Dict[str, Any], int]):
     sample, seed, enc_name, enc_opts, anz_name, meas, layers = payload
     try:
         return run_one(sample, enc_name, enc_opts, layers, meas, anz_name, seed)
@@ -553,20 +871,21 @@ def main() -> None:
         ("angle_embedding_y", {"angle_scale": 0.5, "reupload": True}),
     ]
 
-    # Mean-Z readout across active wires.
     feats = _active_features()
-    measurement: Dict[str, Any] = {"name": "z0", "wires": [0]}
+    # Default readout: mean-Z across all active wires (stable, fast baseline).
+    measurement: Dict[str, Any] = {"name": "mean_z", "wires": list(range(len(feats)))}
 
     # Grid of ansatz/layers, overridable via env lists
     anz_list = _env_list_str("EDGE_ANZ_LIST", ["ring_rot_cnot"]) or [
         os.environ.get("EDGE_ANZ", "ring_rot_cnot")
     ]
-    layers_list = _env_list_int("EDGE_LAYERS_LIST", [3])
+    layers_list = _env_list_int("EDGE_LAYERS_LIST", [4])
 
-    sample = _env_int("EDGE_SAMPLE", 60000)
+    sample_raw = _env_int("EDGE_SAMPLE", BENCHMARK_DEFAULT_SAMPLE)
+    sample = None if int(sample_raw) <= 0 else int(sample_raw)
     seed = _env_int("EDGE_SEED", 42)
 
-    jobs: List[Tuple[int, int, str, Dict[str, Any], str, Dict[str, Any], int]] = []
+    jobs: List[Tuple[Optional[int], int, str, Dict[str, Any], str, Dict[str, Any], int]] = []
     for (enc_name, enc_opts) in encoders:
         for anz_name in anz_list:
             for layers in layers_list:
@@ -706,6 +1025,10 @@ def _enc_opts_from_cfg(cfg) -> Dict[str, Any]:
     mode = str(getattr(cfg, "angle_mode", "none"))
     if mode == "range_0_pi":
         out["angle_range"] = "0_pi"
+    elif mode == "range_pm_pi":
+        out["angle_range"] = "pm_pi"
+    elif mode == "range_pm_pi_2":
+        out["angle_range"] = "pm_pi_2"
     elif mode.startswith("scale_"):
         try:
             out["angle_scale"] = float(mode.split("_", 1)[1])
@@ -726,13 +1049,11 @@ def _build_phase_a_sweep_config(*, ansatz_name: str) -> Dict[str, Any]:
         "name": f"edgeiiot-phase-a-{ansatz_name}-sample{PHASE_A_SAMPLE}-b{EDGE_DEFAULT_BATCH}-e{PHASE_A_EPOCHS}",
         "method": "random",
         "metric": {"name": "objective", "goal": "maximize"},
-        "program": "scripts/QML_ML-EdgeIIoT-benchmark.py",
-        "command": ["${env}", "python", "${program}", "--sweep"],
         "parameters": {
             "phase": {"value": "phase_a"},
             "sample": {"value": PHASE_A_SAMPLE},
             "enc_name": {"values": PHASE_A_ENC_NAMES},
-            "angle_mode": {"value": "scale_0.5"},
+            "angle_mode": {"value": "range_pm_pi"},
             "hadamard": {"value": True},
             "reupload": {"value": True},
             "anz_name": {"value": ansatz_name},
@@ -896,12 +1217,11 @@ def _run_sweeps_autorun() -> None:
 
 
 def run_rf_baseline(sample: int = 60000, seed: int = 42, n_estimators: int = 200, class_weight: str = "balanced", stratify: bool = True, test_size: float = 0.2) -> Dict[str, Any]:
-    # Always derive 7 supervised components from selected features for RF
-    feats = EDGE_FEATURES
+    feats = _active_features()
     measurement = {"name": "none", "wires": []}
-    r = Recipe() | csv(EDGE_DATASET, sample_size=None) | select(feats, label=EDGE_LABEL)
+    r = Recipe() | csv(EDGE_DATASET, sample_size=sample) | select(feats, label=EDGE_LABEL)
     r = r | quantile_uniform()
-    r = r | pls_to_pow2(components=7)
+    r = r | pls_to_pow2(components=max(1, len(feats)))
     r = r | train(lr=0.0, batch=0, epochs=0, class_weights=None, seed=seed, test_size=test_size, stratify=stratify)
     r = r | rf_baseline(n_estimators=n_estimators, class_weight=class_weight, random_state=seed)
     recipe = r
@@ -929,15 +1249,34 @@ def run_rf_baseline(sample: int = 60000, seed: int = 42, n_estimators: int = 200
     return summary
 
 if __name__ == "__main__":
-    # Default: run sweeps if W&B enabled, else grid. Set EDGE_MODE to override.
-    mode = os.environ.get("EDGE_MODE", "").lower()
+    # Minimal CLI to avoid accidental sweep launches (e.g. `--help` previously triggered sweeps).
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(
+            "\n".join(
+                [
+                    "Usage:",
+                    "  uv run python scripts/QML_ML-EdgeIIoT-benchmark.py            # grid (default)",
+                    "  uv run python scripts/QML_ML-EdgeIIoT-benchmark.py --sweep    # one W&B sweep step (uses wandb.agent(function=...))",
+                    "  uv run python scripts/QML_ML-EdgeIIoT-benchmark.py --rf       # random-forest baseline",
+                    "  uv run python scripts/QML_ML-EdgeIIoT-benchmark.py --phase-a-ring",
+                ]
+            )
+        )
+        raise SystemExit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1].startswith("-") and sys.argv[1] not in (
+        "--sweep",
+        "--rf",
+        "--phase-a-ring",
+    ):
+        print(f"Unknown option: {sys.argv[1]}. Use --help.")
+        raise SystemExit(2)
+
     if len(sys.argv) > 1 and sys.argv[1] == "--sweep":
-        _run_phase_a_local("ring_rot_cnot")
+        _sweep_train()
     elif len(sys.argv) > 1 and sys.argv[1] == "--phase-a-ring":
         _run_phase_a_local("ring_rot_cnot")
-    elif mode == "grid":
-        main()
-    elif mode == "rf":
+    elif len(sys.argv) > 1 and sys.argv[1] == "--rf":
         run_rf_baseline(
             sample=_env_int("EDGE_SAMPLE", BENCHMARK_DEFAULT_SAMPLE),
             seed=_env_int("EDGE_SEED", EDGE_DEFAULT_SEED),
@@ -946,8 +1285,6 @@ if __name__ == "__main__":
             stratify=os.environ.get("EDGE_STRATIFY", "1") not in ("0", "false", "False"),
             test_size=float(os.environ.get("EDGE_TEST_SIZE", "0.2")),
         )
-    elif _wandb_disabled():
-        # Sweeps require W&B; fall back to grid
-        main()
     else:
-        _run_sweeps_autorun()
+        # Default behavior: grid. Sweeps must be explicitly requested.
+        main()

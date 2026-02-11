@@ -1,0 +1,856 @@
+\chapter{Resultados}
+\label{chap:resultados}
+
+Nessa seção, serão apresentados os resultados obtidos com o desenvolvimento da plataforma de detecção de ataques cibernéticos, incluindo o desempenho dos algoritmos de aprendizado de máquina na classificação entre tráfego normal e malicioso, bem como na identificação do tipo de ataque. Além disso, também são exibidos gráficos de explicabilidade e testes de desempenho da plataforma web.
+
+\section{Análise estatística da base de dados}
+\label{sec:resultados-do-experimento-a}
+
+A Tabela~\ref{tab:caracteristicas_gerais} fornece um resumo das características fundamentais do conjunto de dados empregado neste estudo. No total, 157.800 registros foram contados, totalizando 63 variáveis (features). Esses valores sugerem que se trata de um conjunto de dados de grande porte e alta dimensionalidade, o que justifica o uso de métodos específicos de processamento de dados e escolha de variáveis para assegurar a performance e a compreensão dos modelos.
+
+\begin{table}[H]	
+	%\centering
+	\captionsetup{width=11.3cm}
+	\Caption{\label{tab:caracteristicas_gerais} Características gerais do conjunto de dados}	
+	\IBGEtab{}{
+		\begin{tabular}{lr}
+			\toprule
+			Descrição & Quantidade \\
+			\midrule \midrule
+			Total de Registros & 157.800 \\
+			Total de Features & 63 \\
+			\bottomrule
+		\end{tabular}
+	}{
+	\Fonte{elaborado pelo autor (2025).}
+}
+\end{table}
+
+Na Tabela~\ref{tab:tipos_variaveis}, nota-se uma predominância de variáveis numéricas (43), seguidas por variáveis categóricas (20), e nenhuma variável binária. Esta distribuição é importante na seleção das táticas de pré-processamento, já que variáveis numéricas podem necessitar de normalização, enquanto variáveis categóricas requerem métodos de codificação específicos. A falta de variáveis binárias torna a preparação dos dados mais simples, evitando a necessidade de tratamentos extras para esse tipo de informação.
+
+
+\begin{table}[H]	
+	%\centering
+	\captionsetup{width=11.3cm}
+	\Caption{\label{tab:tipos_variaveis} Tipos de variáveis presentes no conjunto de dados}	
+	\IBGEtab{}{
+		\begin{tabular}{lr}
+			\toprule
+			Tipo de Variável & Quantidade \\
+			\midrule \midrule
+			Numéricas & 43 \\
+			Categóricas & 20 \\
+			Binárias & 0 \\
+			\bottomrule
+		\end{tabular}
+	}{
+	\Fonte{elaborado pelo autor (2025).}
+}
+\end{table}
+
+A Tabela~\ref{tab:distribuicao_classes} mostra a distribuição percentual das classes na base de dados. Nota-se um predomínio da classe \textit{Attack}, responsável por 84,60\% dos registros, enquanto a classe \textit{Normal} detém apenas 15,40\%. Embora a classe \textit{Attack} represente um grande percentual, é crucial enfatizar que ela engloba vários tipos diferentes de ataques.
+
+\begin{table}[H]	
+	%\centering
+	\captionsetup{width=11.3cm}
+	\Caption{\label{tab:distribuicao_classes} Distribuição percentual das classes no conjunto de dados}	
+	\IBGEtab{}{
+		\begin{tabular}{lr}
+			\toprule
+			Classe & Percentual (\%) \\
+			\midrule \midrule
+			Attack & 84{,}60 \\
+			Normal & 15{,}40 \\
+			\bottomrule
+		\end{tabular}
+	}{
+	\Fonte{elaborado pelo autor (2025).}
+}
+\end{table}
+
+Por outro lado, a Tabela~\ref{tab:tipos_ataques} descreve os subtipos contidos na classe \textit{Attack}, destacando a variedade de ameaças presentes no conjunto de dados. Os ataques mais comuns são o \textit{DDoS\_UDP} (9{,}19\%), o \textit{DDoS\_ICMP} (8{,}93\%) e o \textit{Ransomware} (6{,}92\%). No entanto, existem outras categorias com distribuições mais equilibradas, como o \textit{SQL\_injection}, o \textit{Backdoor} e o \textit{XSS}, todos acima de 6\%. A existência de diversos tipos de ataque, alguns de baixa frequência como o \textit{MITM} (0{,}77\%) e o \textit{Fingerprinting} (0{,}63\%), enfatiza a necessidade de métodos que manuseiem adequadamente dados desbalanceados e que consigam identificar ameaças mesmo em circunstâncias de menor representatividade.
+
+
+
+\begin{table}[H]	
+	%\centering
+	\captionsetup{width=11.3cm}
+	\Caption{\label{tab:tipos_ataques} Detalhamento percentual dos tipos de ataques identificados}	
+	\IBGEtab{}{
+		\begin{tabular}{lr}
+			\toprule
+			Tipo de Ataque & Percentual (\%) \\
+			\midrule \midrule
+			DDoS\_UDP & 9{,}19 \\
+			DDoS\_ICMP & 8{,}93 \\
+			Ransomware & 6{,}92 \\
+			DDoS\_HTTP & 6{,}69 \\
+			SQL\_injection & 6{,}53 \\
+			Uploading & 6{,}51 \\
+			DDoS\_TCP & 6{,}49 \\
+			Backdoor & 6{,}46 \\
+			Vulnerability\_scanner & 6{,}39 \\
+			Port\_Scanning & 6{,}38 \\
+			XSS & 6{,}37 \\
+			Password & 6{,}33 \\
+			MITM & 0{,}77 \\
+			Fingerprinting & 0{,}63 \\
+			\bottomrule
+		\end{tabular}
+	}{
+	\Fonte{elaborado pelo autor (2025).}
+}
+\end{table}
+
+
+Dessa forma, pode-se analisar a distribuição na Figura ~\ref{fig:distruibuicao}. 
+
+
+\begin{figure}[H]
+        \captionsetup{width=16cm}
+		\Caption{\label{fig:distruibuicao} Distruibuição da base de dados}
+		%\centering
+		\UFCfig{}{
+			\fbox{\includegraphics[width=16cm]{figuras/resultados/Distribuicao.png}}
+		}{
+			\Fonte{Elaborado pelo autor (2025).}
+		}	
+\end{figure}
+
+\subsection{Matriz de correlação}
+
+A Figura~\ref{fig:correlacao} exibe a matriz de correlação entre as variáveis numéricas do conjunto de informações. Esta matriz é crucial para detectar eventuais duplicações entre atributos, além de relações lineares que podem afetar o rendimento dos algoritmos de aprendizado de máquina.
+
+\begin{figure}[H]
+        \captionsetup{width=16cm}
+		\Caption{\label{fig:correlacao} Matriz de correlação}
+		%\centering
+		\UFCfig{}{
+			\fbox{\includegraphics[width=16cm]{figuras/resultados/correlacao.png}}
+		}{
+			\Fonte{Elaborado pelo autor (2025).}
+		}	
+\end{figure}
+
+Nota-se que a maior parte das correlações é fraca, focando em valores muito próximos de zero, o que sugere uma baixa linearidade entre as variáveis. Contudo, algumas fortes correlações (perto de 1 ou -1) são destacadas por tons mais fortes de vermelho (positivo) e azul (negativo). Por exemplo, existe uma correlação significativa entre variáveis da camada ARP, como \textit{arp.opcode} e \textit{arp.hw.size}, além de campos específicos de protocolos como TCP e MQTT.
+
+Adicionalmente, observa-se a presença de conjuntos isolados com uma forte correlação entre variáveis pertencentes a um mesmo protocolo ou funcionalidade, como os campos ligados à retransmissão DNS e aos identificadores do protocolo MQTT. Essas correlações podem indicar duplicação de dados, algo que deve ser levado em conta em fases subsequentes de escolha de atributos ou diminuição de dimensionalidade, como no PCA.
+
+Também se nota que a variável \textit{Attack\_label}, que simboliza a categoria do dado, tem uma correlação fraca com as variáveis individuais. Isso é esperado em questões complexas de segurança cibernética, onde a diferenciação entre classes é baseada na combinação não linear de diversos atributos.
+
+Dessa forma, pode-se analisar na Tabela~\ref{tab:correlacao_alta} os pares de variáveis altamente correlacionadas. 
+
+\begin{table}[H]
+	\captionsetup{width=11.3cm}
+	\Caption{\label{tab:correlacao_alta} Pares de variáveis com alta correlação (|r| >= 0{,}90)}
+	\IBGEtab{}{
+		\begin{tabular}{lcr}
+			\toprule
+			Variável 1 & Variável 2 & Coef. de Correlação \\
+			\midrule \midrule
+			\textit{arp.opcode} & \textit{arp.hw.size} & 1.00 \\
+			\textit{icmp.seq\_le} & \textit{icmp.transmit\_timestamp} & 1.00 \\
+			\textit{dns.retransmission} & \textit{dns.retransmit\_request} & 1.00 \\
+			\textit{mqtt.config.cleaness} & \textit{mqtt.configs} & 1.00 \\
+			\textit{mqtt.Hdrflags} & \textit{mqtt.len} & 1.00 \\
+			\textit{mqtt.len} & \textit{mqtt.msg.decoded\_as} & 1.00 \\
+			\textit{mqtt.topic\_len} & \textit{mqtt.ver} & 0.99 \\
+			\textit{mqtt.proto\_len} & \textit{mqtt.topic\_len} & 0.99 \\
+			\textit{mqtt.proto\_len} & \textit{mqtt.ver} & 0.99 \\
+			\textit{mbtcp.len} & \textit{mbtcp.trans\_id} & 0.99 \\
+			\textit{mbtcp.len} & \textit{mbtcp.unit\_id} & 0.99 \\
+			\textit{mbtcp.trans\_id} & \textit{mbtcp.unit\_id} & 0.99 \\
+			\bottomrule
+		\end{tabular}
+	}{
+	\Fonte{Elaborado pelo autor (2025).}
+}
+\end{table}
+
+Os pares de variáveis com alta correlação identificados na Tabela~\ref{tab:correlacao_alta} sinalizam a existência de conexões relevantes e consistentes entre os parâmetros examinados. Os pares \textit{arp.opcode} e \textit{arp.hw.size}, \textit{icmp.seq\_le} e \textit{icmp.transmit\_timestamp}, com coeficientes de correlação de 1,00, indicam uma relação quase perfeita entre essas variáveis. Isso indica que a variação de uma variável está diretamente ligada à variação da outra, o que pode sugerir uma redundância informativa entre ambas. As correlações perfeitas identificadas podem sugerir que essas variáveis possuem interdependência funcional, espelhando, possivelmente, características similares ou comportamentos similares em suas distribuições.
+
+É importante identificar essas fortes correlações, pois elas podem auxiliar na simplificação da análise de dados, possibilitando a diminuição do número de variáveis sem prejudicar a qualidade das informações obtidas. Este procedimento de simplificação tem o potencial de simplificar a modelagem e a interpretação dos dados, sendo particularmente benéfico em pesquisas que envolvem grandes quantidades de variáveis interligadas.
+
+\subsection{Análise de Outliers}
+
+A análise dos dados implicou na elaboração de um boxplot para todas as variáveis numéricas, com o objetivo de identificar valores incomuns (outliers), que podem indicar comportamentos incomuns no tráfego de rede. A ilustração \ref{fig:outliers} evidencia que a maior parte das variáveis apresenta valores concentrados próximos a zero, representando distribuições assimétricas de baixa variabilidade. Isso é confirmado ao analisar diversas caixas de distribuição comprimidas, muitas vezes reduzidas a uma linha horizontal com círculos ao redor, indicando a existência de poucos valores que divergem do padrão predominante. 
+
+Entre as variáveis analisadas, tcp.ack\_raw se destaca por apresentar o maior número de outliers. Os valores desta variável atingem magnitudes próximas a 4,3 × 109, indicando uma diferença significativa em relação às demais. Essa conduta pode estar relacionada a transmissões automatizadas ou a ações mal-intencionadas, como tentativas de varredura ou ataques distribuídos que demandam um grande número de confirmações (ACKs) no protocolo TCP.
+
+Outra variável com grande variabilidade é a tcp.tls\_port, que apresentou uma área de distribuição significativamente maior em comparação com as demais. Esta propriedade aponta para uma dispersão mais acentuada nos valores, o que pode indicar o uso incomum de múltiplas portas TLS no tráfego sob monitoramento, fator igualmente relevante para a proteção da informação. Notou-se também outliers na variável tcp.len, o que pode sugerir a transmissão de pacotes com comprimentos que não seguem os padrões esperados, outro possível indício de comportamento incomum na rede.
+
+A presença de outliers tão significativos em variáveis específicas destaca a importância desses elementos na etapa de modelagem preditiva. Os valores extremos podem representar traços discriminatórios na identificação de tráfego mal-intencionado, sendo essenciais para algoritmos de detecção de invasão que empregam aprendizado de máquina. Portanto, a primeira análise estatística por meio do boxplot não apenas auxilia na compreensão da distribuição dos dados, mas também oferece subsídios para a escolha das variáveis mais relevantes para a categorização de ataques cibernéticos.
+
+\subsection{Análise Descritiva}
+
+A Tabela \ref{tab:estatisticas_descritivas} exibe as estatísticas descritivas das variáveis obtidas dos fluxos de rede examinados. As medidas de tendência central (média e mediana), dispersão (desvio padrão e variância) e distribuição (assimetria e curtose) foram calculadas. Notou-se que muitas variáveis têm mediana zero, sinalizando uma acentuada assimetria à direita. Isso pode estar ligado à abundância de valores nulos ou baixos, com poucos valores extremos positivos. Ademais, variáveis como http.content\_length, udp.port e dns.retransmission exibem índices altíssimos de assimetria e curtose, indicando uma distribuição de cauda longa e concentração de valores em torno de zero, o que indica a existência de outliers relevantes.
+
+Outro aspecto significativo é que certas variáveis têm valores fixos, como icmp.unused, http.tls\_port, dns.qry.type, mqtt.msg\_decoded\_as e dns.retransmit\_request\_in, com média, variância, assimetria e curtose iguais a zero. Isso sugere a falta de variabilidade, o que torna essas variáveis potenciais candidatas à eliminação na fase de pré-processo. Adicionalmente, variáveis como tcp.len e dns.qry.qu exibem elevados índices de curtose, enfatizando a necessidade de normalização ou transformação dos dados para minimizar os efeitos da dispersão extrema nos algoritmos de aprendizado de máquina. Essas considerações justificam a aplicação de métodos sólidos de pré-processamento, como a normalização, a eliminação de discrepâncias e a escolha de atributos, para assegurar a efetividade das fases subsequentes da análise.
+
+\begin{table}[H]
+\captionsetup{width=11.3cm}
+\caption{\label{tab:estatisticas_descritivas} Estatísticas Descritivas das Variáveis}
+\resizebox{\textwidth}{!}{
+\small
+\begin{tabular}{lccccccc}
+    \toprule
+    Variável & Média & Mediana & Desvio Padrão & Variância & Assimetria & Curtose \\
+    \midrule \midrule
+    \textit{arp.opcode} & 1.419518e-02 & 0.000000e+00 & 1.497828e-01 & 2.243489e-02 & 11.475214 & 138.199504 \\
+    \textit{arp.hw.size} & 5.984791e-02 & 0.000000e+00 & 5.962449e-01 & 3.555079e-01 & 9.862355 & 95.267261 \\
+    \textit{icmp.checksum} & 3.047292e+03 & 0.000000e+00 & 1.114433e+04 & 1.241961e+08 & 3.916007 & 14.725320 \\
+    \textit{icmp.seq\_le} & 3.239980e+03 & 0.000000e+00 & 1.140607e+04 & 1.300985e+08 & 3.741245 & 13.296843 \\
+    \textit{icmp.transmit\_timestamp} & 4.046816e+04 & 0.000000e+00 & 1.764075e+06 & 3.111959e+12 & 43.569380 & 1896.331400 \\
+    \textit{icmp.unused} & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000 & 0.000000 \\
+    \textit{http.content\_length} & 1.471552e+01 & 0.000000e+00 & 2.296597e+02 & 5.274356e+04 & 306.870020 & 111491.247239 \\
+    \textit{http.response} & 4.574778e-02 & 0.000000e+00 & 2.089383e-01 & 4.365520e-02 & 4.348251 & 16.907498 \\
+    \textit{http.tls\_port} & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000 & 0.000000 \\
+    \textit{tcp.ack} & 7.160039e+07 & 1.000000e+00 & 3.101231e+08 & 9.617632e+16 & 4.755484 & 22.502304 \\
+    \textit{tcp.ack\_raw} & 1.358347e+09 & 1.160051e+09 & 1.295523e+09 & 1.678380e+18 & 0.526109 & -0.935133 \\
+    \textit{tcp.checksum} & 2.579660e+04 & 2.390600e+04 & 2.151303e+04 & 4.628105e+08 & 0.252818 & -1.312754 \\
+    \textit{tcp.connection.fin} & 5.814322e-02 & 0.000000e+00 & 2.340148e-01 & 5.476293e-02 & 3.776363 & 12.261069 \\
+    \textit{tcp.connection.rst} & 9.411914e-02 & 0.000000e+00 & 2.919953e-01 & 8.526127e-02 & 2.780086 & 5.728949 \\
+    \textit{tcp.connection.syn} & 1.278517e-01 & 0.000000e+00 & 3.339257e-01 & 1.115064e-01 & 2.228957 & 2.968287 \\
+    \textit{tcp.connection.synack} & 2.994930e-02 & 0.000000e+00 & 1.704480e-01 & 2.905253e-02 & 5.515543 & 28.421571 \\
+    \textit{tcp.dstport} & 1.796465e+04 & 1.883000e+03 & 2.415422e+04 & 5.834265e+08 & 0.804219 & -1.179358 \\
+    \textit{tcp.flags} & 1.261400e+01 & 1.600000e+01 & 9.319136e+00 & 8.684629e+01 & -0.287553 & -1.527492 \\
+    \textit{tcp.flags.ack} & 6.352471e-01 & 1.000000e+00 & 4.813623e-01 & 2.317097e-01 & -0.561942 & -1.684242 \\
+    \textit{tcp.len} & 1.297793e+02 & 0.000000e+00 & 1.307038e+03 & 1.708347e+06 & 41.852411 & 1870.778848 \\
+    \textit{tcp.seq} & 1.875111e+06 & 1.000000e+00 & 1.579707e+07 & 2.495474e+14 & 9.691264 & 98.596700 \\
+    \textit{udp.port} & 7.748479e+00 & 0.000000e+00 & 6.134448e+02 & 3.763146e+05 & 81.939532 & 6839.481369 \\
+    \textit{udp.stream} & 1.211405e+05 & 0.000000e+00 & 4.687607e+05 & 2.197366e+11 & 4.166703 & 16.852035 \\
+    \textit{udp.time\_delta} & 3.414068e-01 & 0.000000e+00 & 9.686192e+00 & 9.382231e+01 & 31.656207 & 1083.124495 \\
+    \textit{dns.qry.name} & 1.270061e+04 & 0.000000e+00 & 1.568478e+05 & 2.460124e+10 & 14.086297 & 210.527293 \\
+    \textit{dns.qry.qu} & 7.786692e-01 & 0.000000e+00 & 2.306341e+01 & 5.319209e+02 & 33.366437 & 1187.560077 \\
+    \textit{dns.qry.type} & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000 & 0.000000 \\
+    \textit{dns.retransmission} & 1.451204e-03 & 0.000000e+00 & 1.892669e-01 & 3.582195e-02 & 145.243269 & 21344.327902 \\
+    \textit{dns.retransmit\_request} & 6.337136e-06 & 0.000000e+00 & 2.517367e-03 & 6.337136e-06 & 397.240481 & 157800.000000 \\
+    \textit{dns.retransmit\_request\_in} & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000 & 0.000000 \\
+    \textit{mqtt.conflag.cleansess} & 7.921420e-03 & 0.000000e+00 & 8.864942e-02 & 7.858720e-03 & 11.101816 & 121.251865 \\
+    \textit{mqtt.conflags} & 1.584284e-02 & 0.000000e+00 & 1.772988e-01 & 3.143488e-02 & 11.101816 & 121.251865 \\
+    \textit{mqtt.hdrflags} & 2.581293e+00 & 0.000000e+00 & 2.069524e+01 & 4.282931e+02 & 10.026112 & 103.343265 \\
+    \textit{mqtt.len} & 4.193409e-01 & 0.000000e+00 & 3.606594e+00 & 1.300752e+01 & 9.927178 & 101.242398 \\
+    \textit{mqtt.msg\_decoded\_as} & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000 & 0.000000 \\
+    \textit{mqtt.msgtype} & 1.613308e-01 & 0.000000e+00 & 1.293453e+00 & 1.673020e+00 & 10.026112 & 103.343265 \\
+    \textit{mqtt.proto\_len} & 3.168568e-02 & 0.000000e+00 & 3.545977e-01 & 1.257395e-01 & 11.101816 & 121.251865 \\
+    \textit{mqtt.topic\_len} & 1.895057e-01 & 0.000000e+00 & 2.124206e+00 & 4.512253e+00 & 10.026112 & 103.343265 \\
+    \textit{mqtt.payload} & 1.030489e-02 & 0.000000e+00 & 2.543369e-02 & 1.156231e-03 & 11.101816 & 121.251865 \\
+    \textit{mqtt.ver} & 4.072058e-02 & 0.000000e+00 & 2.037118e-01 & 4.148243e-02 & 3.587321 & 12.407369 \\
+    \textit{mbtcp.len} & 3.948290e+01 & 0.000000e+00 & 1.563226e+02 & 2.441529e+04 & 9.221775 & 84.436597 \\
+    \textit{mbtcp.trans\_id} & 3.211104e+05 & 0.000000e+00 & 9.217325e+05 & 8.488272e+11 & 7.983332 & 98.672385 \\
+    \textit{mbtcp.unit\_id} & 2.070963e+00 & 0.000000e+00 & 2.417278e+00 & 5.847070e+00 & 2.853501 & 7.024098 \\
+    \textit{Attack\_label} & 1.234506e+00 & 0.000000e+00 & 2.560231e+00 & 6.554126e+00 & 5.932458 & 42.659083 \\
+    \bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Análise Computação Quântica}
+
+A análise da Tabela \ref{tab:entropia_shannon}, que exibe as entropias de Shannon das variáveis obtidas dos pacotes de rede, possibilita determinar quais atributos apresentam uma maior diversidade informacional. Variáveis com elevada entropia sinalizam maior incerteza nos dados, normalmente ligada a comportamentos mais complexos ou variados no tráfego de rede. Neste cenário, as variáveis tcp.checksum (12.9654), tcp.ack\_raw (11.8978), tcp.ack (6.8329), tcp.ack (6.6531) e tcp.seq (5.2026) ganham destaque, indicando que essas características mudam consideravelmente ao longo das amostras e, consequentemente, têm maior capacidade de distinguir entre tráfego benigno e malicioso.
+
+Em contrapartida, a maior parte das variáveis possui entropia muito reduzida ou nula, como é o caso de icmp.unused, http.tls\_port, dns.qry.type, MQTT.msg\_decoded\_as e mbtcp.unit\_id. Por possuírem valores praticamente fixos, esses atributos não afetam significativamente a variabilidade dos dados e tendem a ter menor importância em modelos de aprendizado de máquina, especialmente na atividade de classificação. Isso pode sugerir que os campos estruturais dos protocolos permanecem inalterados entre diversas conexões ou sessões, restringindo sua utilização como indicadores de anomalias ou ataques.
+
+Em resumo, os achados da entropia corroboram a ideia de que as variáveis ligadas ao protocolo TCP são as mais relevantes no conjunto examinado. Isso está em consonância com os achados da análise de boxplot, onde tcp.ack\_raw, tcp.seq e tcp.len também se sobressaíram pela existência de outliers e alta variabilidade. A concordância entre essas duas análises destaca a importância dessas variáveis na análise do comportamento da rede, essenciais para a detecção de comportamentos suspeitos e a elaboração de modelos preditivos eficientes para a segurança cibernética.
+
+\begin{table}[H]
+	\captionsetup{width=11.3cm}
+	\caption{\label{tab:entropia_shannon} Entropia de Shannon das Features}
+	\begin{tabular}{lcccc}
+		\toprule
+		Variável & Entropia de Shannon \\
+		\midrule \midrule
+		\textit{arp.opcode} & 0.0904 \\
+		\textit{arp.hw.size} & 0.0806 \\
+		\textit{icmp.checksum} & 1.7137 \\
+		\textit{icmp.seq\_le} & 1.8196 \\
+		\textit{icmp.transmit\_timestamp} & 0.0098 \\
+		\textit{icmp.unused} & -0.0000 \\
+		\textit{http.content\_length} & 0.4815 \\
+		\textit{http.response} & 0.2681 \\
+		\textit{http.tls\_port} & -0.0000 \\
+		\textit{tcp.ack} & 6.6531 \\
+		\textit{tcp.ack\_raw} & 11.8978 \\
+		\textit{tcp.checksum} & 12.9654 \\
+		\textit{tcp.connection.fin} & 0.3200 \\
+		\textit{tcp.connection.rst} & 0.4501 \\
+		\textit{tcp.connection.syn} & 0.5515 \\
+		\textit{tcp.connection.synack} & 0.1941 \\
+		\textit{tcp.dstport} & 6.8329 \\
+		\textit{tcp.flags} & 2.6536 \\
+		\textit{tcp.flags.ack} & 0.9466 \\
+		\textit{tcp.len} & 2.4413 \\
+		\textit{tcp.seq} & 5.2026 \\
+		\textit{udp.port} & 0.0312 \\
+		\textit{udp.stream} & 1.7163 \\
+		\textit{udp.time\_delta} & 0.0304 \\
+		\textit{dns.qry.name} & 0.1850 \\
+		\textit{dns.qry.qu} & 0.0264 \\
+		\textit{dns.qry.type} & -0.0000 \\
+		\textit{dns.retransmission} & 0.0027 \\
+		\textit{dns.retransmit\_request} & 0.0001 \\
+		\textit{dns.retransmit\_request\_in} & -0.0000 \\
+		\textit{mqtt.conflag.cleansess} & 0.0667 \\
+		\textit{mqtt.conflags} & 0.0667 \\
+		\textit{mqtt.hdrflags} & 0.2689 \\
+		\textit{mqtt.len} & 0.2013 \\
+		\textit{mqtt.msg\_decoded\_as} & -0.0000 \\
+		\textit{mqtt.msgtype} & 0.2689 \\
+		\textit{mqtt.proto\_len} & 0.0667 \\
+		\textit{mqtt.topic\_len} & 0.0665 \\
+		\textit{mqtt.ver} & 0.0667 \\
+		\textit{mbtcp.len} & -0.0000 \\
+		\textit{mbtcp.trans\_id} & -0.0000 \\
+		\textit{mbtcp.unit\_id} & -0.0000 \\
+		\textit{Attack\_label} & 0.6198 \\
+		\bottomrule
+	\end{tabular}
+\end{table}
+
+
+
+\section{Modelos de machine learning para detecção de ataques}
+
+Para classificação, dividiu-se em duas etapas. A primeira etapa é a classificação binária, para detectar se o tráfego é normal ou se representa um tráfego malicioso, enquanto que a segunda etapa é a classificação multiclasse, definindo qual o tipo de ataque representa o tráfego. 
+
+\subsection{Classificação binária}
+
+Após a avaliação dos modelos de aprendizado de máquina, na tabela ~\ref{tab:resultados_algoritmos} é possível observar o desempenho dos modelos em relação a acurácia global, acurácia por classe e F1-score.
+
+\begin{table}[H]
+	\captionsetup{width=14cm}
+	\caption{\label{tab:resultados_algoritmos} Resultados de desempenho dos algoritmos de classificação}
+	\begin{tabular}{lcccc}
+		\toprule
+		Algoritmo & Acurácia & Acurácia Normal & Acurácia Ataque & F1-Score \\
+		\midrule \midrule
+		SVM & 0.9977 $\pm$ 0.0004 & 0.9881 $\pm$ 0.019 & 0.9995 $\pm$ 0.0002 & 0.9977 $\pm$ 0.0004 \\
+		KNN & 0.9988 $\pm$ 0.0002 & 0.9931 $\pm$ 0.0015 & 0.9998 $\pm$ 0.0001 & 0.9988 $\pm$ 0.0002 \\
+		Naive Bayes & 0.8771 $\pm$ 0.0012 & 0.2897 $\pm$ 0.0051 & 0.9840 $\pm$ 0.0011 & 0.8526 $\pm$ 0.0015 \\
+		Random Forest & 0.9999 $\pm$ 0.0000 & 0.9999 $\pm$ 0.0000 & 1.0 $\pm$ 0.0000 & 1.0 $\pm$ 0.0000 \\
+		Logistic Regression & 0.9398 $\pm$ 0.0013 & 0.6966 $\pm$ 0.0102& 0.9841 $\pm$ 0.0013 & 0.9367 $\pm$ 0.0015\\
+		%OPF & 0.889 & 0.4 & 0.3 & 0.8 \\
+		\bottomrule
+	\end{tabular}
+\end{table}
+
+Observa-se que o algoritmo Random Forest obteve as melhores métricas, seguido pelos algoritmos KNN e SVM. Além disso, ao avaliar a eficiência dos modelos em relação ao tempo de processamento, como mostrado na Tabela~\ref{tab:tempos_algoritmos}, verifica-se que os algoritmos SVM e Random Forest demandaram mais tempo para o treinamento. No entanto, considerando o tempo de teste, o Random Forest apresentou um tempo de apenas 0.0214 segundos, ficando atrás somente do Logistic Regression e Naive Bayes.
+
+
+\begin{table}[H]
+	\captionsetup{width=14cm}
+	\caption{\label{tab:tempos_algoritmos} Tempos de treinamento e teste dos algoritmos de classificação}
+	\begin{tabular}{lcc}
+		\toprule
+		Algoritmo & Tempo de Treinamento (s) & Tempo de Teste (s) \\
+		\midrule \midrule
+		SVM & 94.8420 & 2.0567 \\
+		KNN & 0.1791 & 0.5628 \\
+		Naive Bayes & 0.0243 & 0.0031 \\
+		Random Forest & 3.0990 & 0.0214 \\
+		Logistic Regression & 0.3605 & 0.0006 \\
+		\bottomrule
+	\end{tabular}
+\end{table}
+
+Além disso, pode-se analisar na Figura ~\ref{fig:matrizesConfusaoBinario} as matrizes de confusão de cada modelo utilizado. 
+
+\begin{figure}[H]
+    \centering
+    % --- Primeira linha: 2 figuras ---
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusao/LR.png}
+        \caption{Logistic Regression}
+        \label{fig:sub1}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusao/NV.png}
+        \caption{Naive Bayes}
+        \label{fig:sub2}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    % --- Segunda linha: 2 figuras ---
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusao/SVM.png}
+        \caption{SVM}
+        \label{fig:sub3}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusao/KNN.png}
+        \caption{K-NN}
+        \label{fig:sub4}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    % --- Terceira linha: 1 figura centralizada ---
+    \begin{subfigure}[b]{0.6\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusao/RF.png}
+        \caption{Random Forest}
+        \label{fig:sub5}
+    \end{subfigure}
+
+    \caption{Matrizes de Confusão dos algoritmos.}
+    \label{fig:matrizesConfusaoBinario}
+\end{figure}
+
+Desse modo, pode-se observar que, apesar de as métricas dos algoritmos terem sido bem próximas quando analisadas em termos percentuais, a análise das matrizes de confusão de cada modelo evidencia que o Random Forest, dentre todas as amostras, errou apenas uma da classe normal e nenhuma da classe ataque. Já os outros algoritmos apresentaram um maior número de falsos positivos e falsos negativos.
+
+\subsection{Classificação multiclasse}
+
+Na Tabela ~\ref{tab:resultados_algoritmos_mult} são apresentados os resultados globais de desempenho dos algoritmos de aprendizado de máquina para a classificação multiclasse. Percebe-se, assim como na classificação binária, que o algoritmo Random Forest alcançou o melhor desempenho no geral, obtendo acurácia de 0.9984 $\pm$ 0.0010 e F1-score de 0.9984 $\pm$ 0.0010, em relação aos demais algoritmos. 
+
+
+\begin{table}[H]
+    \captionsetup{width=14cm}
+    \caption{\label{tab:resultados_algoritmos_mult} Resultados de desempenho dos algoritmos de classificação}
+    \centering
+    \begin{tabular}{lcc}
+        \toprule
+        Algoritmo & Acurácia & F1-Score \\
+        \midrule \midrule
+        SVM & 0.9894 $\pm$ 0.0009 & 0.9891 $\pm$ 0.0009 \\
+        KNN & 0.9908 $\pm$ 0.0008 & 0.9909 $\pm$ 0.0008 \\
+        Naive Bayes & 0.8713 $\pm$ 0.0019 & 0.8677 $\pm$ 0.0021 \\
+        Random Forest & 0.9984$\pm$0.0010 & 0.9984 $\pm$ 0.0010 \\
+        Logistic Regression & 0.9685 $\pm$ 0.0012 & 0.9669 $\pm$ 0.0013 \\
+        %OPF & 0.889 & 0.8 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+O algoritmo KNN obteve resultados próximos, com acurácia de 0.9908 $\pm$ 0.0008 e F1-score de 0.9909 $\pm$ 0.0008. Já o Naive Bayes foi o algoritmo que apresentou os menores valores para as métricas, com acurácia de 0.8713 $\pm$ 0.0019 e F1-score de 0.8677 $\pm$ 0.0021.
+
+Para analisar o desempenho que o algoritmos tiveram em cada tipo de ataque, utilizou a acurácia por classe. Na Tabela~\ref{tab:resultados_multiclasse} detalha esses resultados.
+
+
+\begin{table}[H]
+    \captionsetup{width=14cm}
+    \caption{\label{tab:resultados_multiclasse} Acurácia por classe para cada algoritmo}
+    \centering
+    \begin{tabular}{lccccc}
+        \toprule
+        Classe & SVM & KNN & Naive Bayes & Random Forest & Logistic Regression \\
+        \midrule \midrule
+        A0  & 0.9959 $\pm$ 0.0020 & 0.9983 $\pm$ 0.0011 & 0.8589 $\pm$ 0.0092 & 0.9993 $\pm$ 0.0006  & 0.9615 $\pm$ 0.0050  \\
+        A1  & 0.9938 $\pm$ 0.0012 & 0.9692 $\pm$ 0.0033 & 0.9338 $\pm$ 0.0063 & 0.9997 $\pm$ 0.0004  & 0.9675 $\pm$ 0.0054  \\
+        A2  & 0.9998 $\pm$ 0.0003 & 0.9999 $\pm$ 0.0002 & 0.9998 $\pm$ 0.0004 & 0.9999 $\pm$ 0.0002  & 0.9998 $\pm$ 0.0003  \\
+        A3  & 0.9979 $\pm$ 0.0009 & 0.9964 $\pm$ 0.0012 & 0.5864 $\pm$ 0.0115 & 1.0000 $\pm$ 0.0000  & 0.9502 $\pm$ 0.0044  \\
+        A4  & 0.9997 $\pm$ 0.0006 & 1.0000 $\pm$ 0.0000 & 0.9998 $\pm$ 0.0005 & 1.0000 $\pm$ 0.0000  & 0.9997 $\pm$ 0.0006  \\
+        A5  & 0.4036 $\pm$ 0.0550 & 0.9650 $\pm$ 0.0170 & 0.2447 $\pm$ 0.0300 & 0.9840 $\pm$ 0.0183  & 0.1428 $\pm$ 0.0244  \\
+        A6  & 1.0000 $\pm$ 0.0000 & 1.0000 $\pm$ 0.0000 & 1.0000 $\pm$ 0.0000 & 1.0000 $\pm$ 0.0000  & 1.0000 $\pm$ 0.0000  \\
+        A7  & 0.9995 $\pm$ 0.0007 & 0.9982 $\pm$ 0.0005 & 0.9861 $\pm$ 0.0034 & 0.9999 $\pm$ 0.0003  & 0.9566 $\pm$ 0.0053  \\
+        A8  & 0.9990 $\pm$ 0.0007 & 0.9982 $\pm$ 0.0014 & 0.5921 $\pm$ 0.0149 & 1.0000 $\pm$ 0.0000  & 0.9935 $\pm$ 0.0029  \\
+        A9  & 0.9761 $\pm$ 0.0030 & 0.9950 $\pm$ 0.0017 & 0.8247 $\pm$ 0.0088 & 1.0000 $\pm$ 0.0000  & 0.9742 $\pm$ 0.0022  \\
+        A10 & 0.9826 $\pm$ 0.0020 & 0.9598 $\pm$ 0.0050 & 0.9536 $\pm$ 0.0049 & 1.0000 $\pm$ 0.0000  & 0.9664 $\pm$ 0.0061  \\
+        A11 & 0.9869 $\pm$ 0.0026 & 0.9741 $\pm$ 0.0047 & 0.7287 $\pm$ 0.0078 & 1.0000 $\pm$ 0.0000  & 0.9687 $\pm$ 0.0045  \\
+        A12 & 0.9984 $\pm$ 0.0010 & 0.9975 $\pm$ 0.0009 & 0.9861 $\pm$ 0.0035 & 0.9815 $\pm$ 0.0129  & 0.9501 $\pm$ 0.0056  \\
+        A13 & 0.9928 $\pm$ 0.0028 & 0.9990 $\pm$ 0.0011 & 0.9526 $\pm$ 0.0051 & 1.0000 $\pm$ 0.0000  & 0.9864 $\pm$ 0.0038  \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Dessa forma, pode-se perceber que, de forma geral, o Random Forest manteve de forma consistente em todos os ataques um desempenho elevado, alcançando acurácia máxima em 8 das 14 classes, e as demais acima de 0.98. Assim como mostrou na acurácia global, o KNN e o SVM também mantiveram um desempenho elevado na maioria dos tipos de ataque. 
+
+Observa-se, também, que a classe A6 (ataque MITM) obteve acurácia máxima em todos os algoritmos, o que indica que os algoritmos conseguem encontrar um padrão na separação desse tipo de ataque. Por outro lado, a Classe A5 (ataque Fingerprinting) foi a que obeteve menor acurácia em praticamente todos os algoritmos, podendo ser explicado por ser a classe que contém a menor quantidade de dados em todo o dataset. 
+
+Além disso, na Tabela ~\ref{tab:tempos_algoritmos_multiclasse} é apresentado os tempo de processamento de cada algoritmo para treimanento e teste. Observa-se que além do algoritmo Random Forest ser o de melhor acurácia global e ter uma consistência na acurácia por ataque, ele ainda consegue ter um tempo de relativamente bom, ficando atrás somente do KNN e Naive Bayes no tempo de treinamento e dos algoritmos Naive Bayes e Logistic Regression, no tempo de teste. 
+
+\begin{table}[H]
+	\captionsetup{width=14cm}
+	\caption{\label{tab:tempos_algoritmos_multiclasse} Tempos de treinamento e teste dos algoritmos de classificação multiclasse}
+	\begin{tabular}{lcc}
+		\toprule
+		Algoritmo & Tempo de Treinamento (s) & Tempo de Teste (s) \\
+		\midrule \midrule
+		SVM & 8.7612 & 0.0680 \\
+		KNN & 0.2065 & 0.8677 \\
+		Naive Bayes & 0.0352 & 0.0199 \\
+		Random Forest & 9.8497 & 0.0814 \\
+		Logistic Regression & 47.5124 & 0.0032 \\
+		\bottomrule
+	\end{tabular}
+\end{table}
+
+Na Figura Z é possível observar as matrizes de confusão de cada algoritmo para a classificação dos tipos de ataque. 
+
+\begin{figure}[H]
+    \centering
+    % --- Primeira linha: 2 figuras ---
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusaoMulti/LR.png}
+        \caption{Logistic Regression}
+        \label{fig:LRM}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusaoMulti/NV.png}
+        \caption{Naive Bayes}
+        \label{fig:NVM}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    % --- Segunda linha: 2 figuras ---
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusaoMulti/SVM.png}
+        \caption{SVM}
+        \label{fig:SVMM}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusaoMulti/KNN.png}
+        \caption{K-NN}
+        \label{fig:KKNM}
+    \end{subfigure}
+
+    \vspace{0.5em}
+
+    % --- Terceira linha: 1 figura centralizada ---
+    \begin{subfigure}[b]{0.6\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/MatrizesConfusaoMulti/RF.png}
+        \caption{Random Forest}
+        \label{fig:RFM}
+    \end{subfigure}
+
+    \caption{Matrizes de Confusão dos algoritmos para a classificação dos tipos de ataques.}
+    \label{fig:matrizesConfusaoMulti}
+\end{figure}
+
+\subsection{Considerações}
+
+Em termos gerais, o algoritmo Random Forest obteve os melhores resultados considerando as métricas para classificação binária e classificação multiclasse, utilizando um tempo de processamento adequado para a tarefa em questão. Os demais algoritmos também conseguiram um resultado satisfatório, demostrando a eficácia dos métodos propostos e das escolhas dos hiperparâmetros. 
+
+
+\section{Explicabilidade}
+
+Em relação a explicabilidade do sistema proposto, na Figura \ref{fig:shap-waterfall}, pode-se observar uma única decisão do detector binário, demonstrando a contribuição, no valor resultante do modelo, das entradas mais relevantes. Percebe-se que a anormalidade presente na entrada `tcp.ack` apresentou a maior influência para que a classificação seja dada como tal.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figuras/resultados/shap_waterfall.png}
+    \caption{Gráfico \textit{Waterfall} de uma detecção usando o banco de dados teste.}
+    \label{fig:shap-waterfall}
+\end{figure}
+
+Na Figura \ref{fig:shap-violin}, por outro lado, pode-se observar um conjunto de 100 amostras de uma das classes de ataque. Ressalta-se a distribuição influência, representando que a influência de determinadas entradas não é fixa, e portanto, varia com as demais entradas, mesmo apresentando influência desproporcional.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figuras/resultados/shap_violin.png}
+    \caption{Gráfico \textit{Violin} de um conjunto de detecções de uma determinda classe, usando o banco de dados teste.}
+    \label{fig:shap-violin}
+\end{figure}
+
+\section{Interface de Usuário (Frontend)}
+
+A interface de usuário foi desenvolvida como uma aplicação web utilizando Flutter Web, pela capacidade do framework em construir interfaces ricas, reativas e com uma base de código única.
+
+A aplicação se comunica exclusivamente com a API Principal (FastAPI), garantindo uma separação clara de responsabilidades e um fluxo de dados seguro. Os fluxos de interação foram projetados para fornecer uma experiência de usuário intuitiva e informativa.
+
+\subsection{Autenticação e Gestão de Acesso}
+
+O acesso ao sistema é controlado por um fluxo de autenticação completo e seguro. O processo inicia-se com as telas de login e cadastro de novos usuários, apresentadas na figura \ref{fig:fluxo_inicial}. Para garantir a integridade e a segurança da conta, o sistema implementa etapas subsequentes de validação, que incluem a verificação obrigatória do e-mail para ativação, um fluxo para recuperação de conta e um passo de autenticação de dois fatores (2FA) durante o login para adicionar uma camada extra de proteção. As interfaces para estes processos de segurança são apresentadas na Figura \ref{fig:fluxo_seguranca}.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo1_A_login.png}
+        \caption*{A: Tela de Login}
+    \end{minipage}\hfill
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        % IMAGEM B DO FLUXO 1 (CADASTRO) AQUI
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo1_B_cadastro.png}
+        \caption*{B: Tela de Cadastro}
+    \end{minipage}
+    \caption{Telas do fluxo inicial de acesso e registro de usuário.}
+    \label{fig:fluxo_inicial}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        % IMAGEM DA RECUPERAÇÃO DE CONTA AQUI
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo2_recuperacao.png}
+        \caption*{A: Recuperação de Conta}
+    \end{minipage}\hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        % IMAGEM DA VALIDAÇÃO DE EMAIL AQUI
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo_validacao_email.png}
+        \caption*{B: Verificação de E-mail}
+    \end{minipage}\hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        % IMAGEM DO 2FA AQUI
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo_2fa.png}
+        \caption*{C: Autenticação 2FA}
+    \end{minipage}
+    \caption{Interfaces do fluxo de validação e segurança da conta.}
+    \label{fig:fluxo_seguranca}
+\end{figure}
+
+
+\subsection{Dashboard Principal}
+
+A página principal da plataforma, apresentada na Figura \ref{fig:dashboard_main}, funciona como um dashboard analítico centralizado, que consome os dados agregados do endpoint `/dashboard/summary` da API. Ela oferece uma visão geral e interativa da segurança da rede, permitindo uma análise rápida e eficiente do estado atual do ambiente monitorado. No topo da tela, o usuário dispõe de filtros de período que conferem flexibilidade à análise, com opções para selecionar intervalos de tempo predefinidos (24 horas, 7 dias, 30 dias) ou definir um intervalo personalizado.
+
+A análise visual dos dados é realizada através de um conjunto de componentes gráficos. A parte superior da tela, exibida na Figura \ref{fig:dashboard_main} A, apresenta um gráfico de pizza com a distribuição percentual dos tipos de ataque e um gráfico de barras que classifica os incidentes por nível de risco. A seção inferior, apresentada na Figura \ref{fig:dashboard_main} B, exibe um gráfico de linhas que mapeia a frequência de detecções ao longo do tempo, permitindo a identificação de picos de atividade, e um gráfico de barras final que classifica os dispositivos mais atacados.
+
+Para uma visão numérica e imediata, a interface destaca os Indicadores Chave de Desempenho (KPIs), que exibem totais de detecções, incidentes, ações automáticas executadas e dispositivos ativos. Cada um desses KPIs é um elemento interativo que, ao ser clicado, abre uma janela modal com uma visualização detalhada dos dados brutos correspondentes, conforme apresentado na Figura \ref{fig:dashboard_modals}.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        % IMAGEM 1 DO DASHBOARD (PARTE SUPERIOR)
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/dashboard_part1.png}
+        \caption*{A: Visão superior do Dashboard}
+    \end{minipage}\hfill
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        % IMAGEM 2 DO DASHBOARD (PARTE INFERIOR)
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/dashboard_part2.png}
+        \caption*{B: Visão inferior com gráficos}
+    \end{minipage}
+    \caption{Telas que compõem a visualização completa do Dashboard Principal.}
+    \label{fig:dashboard_main}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.24\textwidth}
+        \centering
+        % IMAGEM MODAL KPI 1
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/modal_kpi_deteccoes.png}
+        \caption*{A:Detecções}
+    \end{minipage}\hfill
+    \begin{minipage}{0.24\textwidth}
+        \centering
+        % IMAGEM MODAL KPI 2
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/modal_kpi_acoes.png}
+        \caption*{B:Ações}
+    \end{minipage}\hfill
+    \begin{minipage}{0.24\textwidth}
+        \centering
+        % IMAGEM MODAL KPI 3
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/modal_kpi_incidentes.png}
+        \caption*{C:Incidentes}
+    \end{minipage}\hfill
+    \begin{minipage}{0.24\textwidth}
+        \centering
+        % IMAGEM MODAL KPI 4
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/modal_kpi_dispositivos.png}
+        \caption*{D:Dispositivos}
+    \end{minipage}
+    \caption{Janelas modais exibidas ao clicar nos KPIs do dashboard.}
+    \label{fig:dashboard_modals}
+\end{figure}
+
+
+
+\subsection{Histórico de Ameaças e Detalhes da Detecção}
+
+A plataforma oferece visões de histórico que permitem ao analista investigar padrões de ataque de forma focada. A interface principal desta funcionalidade, apresentada na Figura \ref{fig:fluxo11}A, permite a filtragem de eventos por tipo de ameaça, consolidando todas as detecções relacionadas em uma lista cronológica. Ao selecionar um evento específico, o usuário acessa a tela de detalhes da detecção, apresentada na Figura \ref{fig:fluxo11}B. Esta página carrega de forma assíncrona as informações completas do incidente a partir do endpoint `/history/incident-detail/{detection\_id}`, exibindo um resumo técnico, a análise explicativa gerada por um LLM e uma lista de ações recomendadas para a mitigação do risco. A funcionalidade principal desta tela é a capacidade de gerar um relatório completo e formatado do incidente em formato PDF.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo11_A_historico.png}
+        \caption*{A: Histórico de ataques por filtro}
+    \end{minipage}\hfill
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo11_B_detalhe.png}
+        \caption*{B: Detalhes da Detecção}
+    \end{minipage}
+    \caption{Telas de consulta ao histórico e detalhamento de detecções.}
+    \label{fig:fluxo11}
+\end{figure}
+
+\subsection{Gestão e Análise de Dispositivos}
+
+Complementando a visão por ameaças, o sistema provê uma interface completa para a gestão e análise de dispositivos monitorados. O fluxo inicia-se na tela principal de gestão, apresentada na Figura \ref{fig:fluxo_dispositivos}A, que permite ao analista manter um inventário atualizado dos ativos da rede com funcionalidades para visualizar e pesquisar. A partir desta interface, é possível acionar as operações de criação ou edição de um dispositivo através da janela modal exibida na Figura \ref{fig:fluxo_dispositivos}B. Finalmente, ao selecionar um ativo específico, o usuário é direcionado para a tela de detalhes, apresentada na  Figura \ref{fig:fluxo_dispositivos}C, que apresenta um histórico completo de todos os eventos de segurança associados àquele dispositivo.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo8_A_lista_dispositivos.png}
+        \caption*{A: Lista de Dispositivos}
+    \end{minipage}\hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo8_B_modal_dispositivo.png}
+        \caption*{B: Modal de Edição}
+    \end{minipage}\hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo9_A_detalhe_dispositivo.png}
+        \caption*{C: Detalhes do Dispositivo}
+    \end{minipage}
+    \caption{Fluxo de interface para a gestão e análise de dispositivos.}
+    \label{fig:fluxo_dispositivos}
+\end{figure}
+
+\subsection{Geração de Relatórios em PDF}
+
+Para permitir a documentação, o compartilhamento e a análise offline dos dados, a plataforma incorpora uma funcionalidade robusta de geração de relatórios em formato PDF. O sistema é capaz de gerar três tipos principais de relatórios: um relatório tabular consolidando todos os eventos de segurança associados a um dispositivo específico, apresentado na Figura \ref{fig:relatorios_pdf}A; um segundo relatório, também tabular, que agrupa todas as detecções relacionadas a um determinado tipo de ameaça, como visto na Figura \ref{fig:relatorios_pdf}B; e um terceiro relatório detalhado, exibido na Figura \ref{fig:relatorios_pdf}C, que apresenta todas as informações de um único incidente, incluindo a análise gerada pelo LLM e as ações recomendadas.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        % IMAGEM DO PDF DE GESTÃO DE DISPOSITIVOS
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/relatorio_dispositivo.png}
+        \caption*{A: Relatório por Dispositivo}
+    \end{minipage}\hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        % IMAGEM DO PDF DE HISTÓRICO POR AMEAÇA
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/relatorio_ameaca.png}
+        \caption*{B: Relatório por Ameaça}
+    \end{minipage}\hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        % IMAGEM DO PDF DE DETALHE DO ATAQUE
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/relatorio_deteccao.png}
+        \caption*{C: Relatório de Detecção}
+    \end{minipage}
+    \caption{Exemplos dos diferentes relatórios em formato PDF gerados pela plataforma.}
+    \label{fig:relatorios_pdf}
+\end{figure}
+
+\subsection{Módulos Administrativos e Níveis de Acesso}
+
+Para garantir a segurança e a correta segregação de funções, a plataforma implementa um sistema de controle de acesso baseado em papéis, distinguindo dois níveis de permissão: Usuário Padrão e Administrador. A principal diferença visual entre os níveis se manifesta no menu de navegação lateral. O Usuário Padrão, como apresentado na Figura \ref{fig:niveis_acesso}A, tem acesso às funcionalidades essenciais de visualização e análise. Já o perfil de Administrador, exibido na Figura \ref{fig:niveis_acesso}B, possui um menu expandido que inclui seções adicionais para o gerenciamento de usuários e a configuração de parâmetros do sistema.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo3_A_menu_padrao.png}
+        \caption*{A: Menu de Usuário Padrão}
+    \end{minipage}\hfill
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo3_B_menu_admin.png}
+        \caption*{B: Menu de Administrador}
+    \end{minipage}
+    \caption{Diferenças na interface de navegação por nível de acesso do usuário.}
+    \label{fig:niveis_acesso}
+\end{figure}
+
+As funcionalidades exclusivas do perfil de Administrador incluem a Gestão de Usuários e a configuração de Parâmetros do Sistema. O fluxo de gerenciamento de contas, apresentado na Figura \ref{fig:gestao_usuarios}, inicia-se com uma tela que permite ao administrador visualizar a lista completa de usuários e realizar buscas por nome ou e-mail, apresentado na Figura \ref{fig:gestao_usuarios}A. Ao selecionar um usuário, o administrador é direcionado para uma tela de detalhes, apresentado na Figura \ref{fig:gestao_usuarios}B, onde é possível editar as permissões da conta, como ativar ou desativar o acesso ao sistema e conceder privilégios administrativos. A seção de Parâmetros do Sistema, exibida na Figura \ref{fig:parametros_sistema}, por sua vez, oferece uma interface para a configuração de variáveis globais da aplicação, como os dados do servidor SMTP para o envio de e-mails de notificação.
+
+\begin{figure}[h]
+    \centering
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        % IMAGEM DA LISTA DE USUÁRIOS AQUI
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo4_A_lista_usuarios.png}
+        \caption*{A: Lista de Usuários}
+    \end{minipage}\hfill
+    \begin{minipage}{0.48\textwidth}
+        \centering
+        % IMAGEM DO DETALHE E PERMISSÕES DO USUÁRIO AQUI
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/fluxo4_B_detalhe_usuario.png}
+        \caption*{B: Detalhes e Permissões}
+    \end{minipage}
+    \caption{Telas do fluxo de Gestão de Usuários.}
+    \label{fig:gestao_usuarios}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{figuras/arquiteturaEinterface/fluxo5_A_parametros_sistema.png}
+    \caption{Interface para configuração dos Parâmetros do Sistema.}
+    \label{fig:parametros_sistema}
+\end{figure}
+
+\newpage % Considerar necessidade
+
+
+%PEDROLANDIM%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Análise de Desempenho da API Principal (Backend for Frontend)}
+
+Para validar a robustez e a escalabilidade da API Principal (Backend for Frontend), foram conduzidos dois testes de performance distintos: um Teste de Carga, para simular o comportamento sob uso de pico esperado, e um Teste de Estresse, para identificar os limites operacionais do sistema sob condições extremas. A seguir, são apresentados e discutidos os resultados quantitativos de ambos os testes.
+
+\subsection{Resultados do Teste de Carga}
+
+O Teste de Carga foi configurado para simular 15 usuários concorrentes, sendo 10 com perfil de consulta e 5 com perfil de gerenciamento, injetados gradualmente ao longo de 30 segundos. O objetivo principal era avaliar a estabilidade e a latência da API em um cenário de uso normal.
+
+O resultado primário demonstrou a excepcional estabilidade da aplicação, que alcançou uma taxa de sucesso de 100\%, com todas as 45 requisições sendo processadas sem nenhuma falha. A análise dos tempos de resposta revelou uma performance de alta eficiência, com um tempo médio de resposta de 121~ms. Notavelmente, 95\% de todas as requisições foram concluídas em menos de 320~ms (percentil 95), e mesmo os casos mais lentos mantiveram-se abaixo de 403~ms (percentil 99), confirmando que a latência se manteve consistentemente abaixo do limiar de 500~ms. A distribuição dos tempos de resposta, detalhada na Figura~\ref{fig:load_test_response_time}, ilustra que 100\% das requisições foram processadas em menos de 800~ms. Estes resultados indicam que a API é capaz de suportar a carga de trabalho esperada com alta performance e confiabilidade.
+
+\begin{figure}[h]
+    \centering
+    % Descomente a linha abaixo e substitua pelo caminho do seu gráfico.
+    \includegraphics[width=0.8\textwidth]{figuras/arquiteturaEinterface/grafico_carga.png}
+    \caption{Distribuição dos tempos de resposta durante o Teste de Carga.}
+    \label{fig:load_test_response_time}
+\end{figure}
+
+\subsection{Resultados do Teste de Estresse}
+
+O Teste de Estresse foi projetado para identificar o ponto de saturação do sistema, submetendo a API a uma carga instantânea de 190 usuários simultâneos, sendo 150 de consulta e 40 de gerenciamento.
+
+O teste foi bem-sucedido em determinar o limiar de capacidade da aplicação. De um total de 433 requisições, 40 falharam, resultando em uma taxa de erro global de 9.24\%. A análise dos erros, apresentada na Figura~\ref{fig:stress_test_errors}, aponta que a totalidade das falhas se originou de respostas HTTP 503 (Service Unavailable), indicando que o servidor atingiu seu limite de capacidade de processamento concorrente.
+
+\begin{figure}[h]
+    \centering
+    % Descomente a linha abaixo e substitua pelo caminho do seu gráfico.
+    \includegraphics[width=0.8\textwidth]{figuras/arquiteturaEinterface/grafico_estresse_erros.png}
+    \caption{Contagem de requisições bem-sucedidas (OK) e com falha (KO) durante o Teste de Estresse.}
+    \label{fig:stress_test_errors}
+\end{figure}
+
+A sobrecarga induzida causou uma degradação significativa na performance. O tempo médio de resposta para as requisições bem-sucedidas subiu para 1611~ms, um aumento superior a 13 vezes em comparação ao Teste de Carga. O percentil 95 (p95) atingiu 5136~ms, ultrapassando o limiar de 5 segundos, o que evidencia uma experiência de usuário severamente impactada sob tais condições. A Figura~\ref{fig:stress_test_response_comparison} ilustra essa degradação, contrastando a estabilidade do sistema durante o Teste de Carga, apresentada na Figura~\ref{fig:load_test_subfig}A, com a alta latência e instabilidade observadas durante o Teste de Estresse, apresentada na Figura~\ref{fig:stress_test_subfig}B.
+
+\begin{figure}[h!]
+    \centering
+    
+    % --- Subfigura A: Teste de Carga ---
+    \begin{subfigure}{0.9\textwidth}
+        \centering
+        % Descomente a linha abaixo e substitua pelo caminho do seu GRÁFICO DE CARGA.
+         \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/grafico_cargaPercentil.png}
+        \caption{Comportamento sob Teste de Carga.}
+        \label{fig:load_test_subfig}
+    \end{subfigure}
+    
+    \vspace{1em} % Adiciona um pequeno espaço vertical entre as figuras
+    
+    % --- Subfigura B: Teste de Estresse ---
+    \begin{subfigure}{0.9\textwidth}
+        \centering
+        % Descomente a linha abaixo e substitua pelo caminho do seu GRÁFICO DE ESTRESSE.
+        \includegraphics[width=\linewidth]{figuras/arquiteturaEinterface/grafico_estressePercentil.png}
+        \caption{Comportamento sob Teste de Estresse.}
+        \label{fig:stress_test_subfig}
+    \end{subfigure}
+    
+    \caption{Gráficos de percentis de tempo de resposta ao longo do tempo, comparando o comportamento da API sob (a) carga normal e (b) carga de estresse.}
+    \label{fig:stress_test_response_comparison}
+\end{figure}
+
+Em conclusão, o Teste de Estresse demonstra que, embora a API não sofra uma falha catastrófica, seu desempenho degrada e a disponibilidade é parcialmente comprometida ao ser submetida a uma carga instantânea de 190 usuários, estabelecendo um limite prático para sua capacidade na configuração avaliada.
+

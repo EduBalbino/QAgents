@@ -1,67 +1,26 @@
-# %%
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[ ]:
+
+
 # Notebook 1: Análise Estatística Geral do Dataset Edge-IIoTset
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import kagglehub
 import os
 from zipfile import ZipFile
 import json
-import shutil
+from _artifacts_runtime import setup_artifacts
+from _dataset_runtime import setup_cic_sources
 
-# Salva automaticamente todas as figuras em classical/figures quando plt.show() for chamado.
-FIGURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
-os.makedirs(FIGURES_DIR, exist_ok=True)
-_FIGURE_SAVE_COUNT = 0
+_ARTIFACTS_CONTEXT = setup_artifacts(__file__)
+_CIC_CONTEXT = setup_cic_sources(__file__)
 
-
-def _save_figures_instead_of_show(*args, **kwargs):
-    global _FIGURE_SAVE_COUNT
-    fig_nums = plt.get_fignums()
-    for fig_num in fig_nums:
-        fig = plt.figure(fig_num)
-        _FIGURE_SAVE_COUNT += 1
-        out_name = f"analise_projeto_seguranca_{_FIGURE_SAVE_COUNT:04d}.png"
-        out_path = os.path.join(FIGURES_DIR, out_name)
-        fig.savefig(out_path, dpi=200, bbox_inches="tight")
-        print(f"[FIGURE] Saved: {out_path}")
-    plt.close("all")
-
-
-plt.show = _save_figures_instead_of_show
-
-def prepare_trio_dataset_dir():
-    trio_dataset_path = os.path.abspath(
-        os.environ.get(
-            "EDGE_TRIO_DATASET",
-            os.path.join(os.getcwd(), "..", "data", "processed", "edge_iot_trio_binary.csv"),
-        )
-    )
-    if not os.path.exists(trio_dataset_path):
-        raise FileNotFoundError(
-            f"Dataset do trio não encontrado em: {trio_dataset_path}. "
-            "Gere com scripts/prepare_trio_merged_dataset.py."
-        )
-
-    out_dir = os.path.abspath(
-        os.environ.get(
-            "CLASSICAL_TRIO_CACHE_DIR",
-            os.path.join(os.getcwd(), "..", "cache", "classical_trio_input"),
-        )
-    )
-    os.makedirs(out_dir, exist_ok=True)
-    link_path = os.path.join(out_dir, "edge_iot_trio_binary.csv")
-
-    if os.path.islink(link_path) or os.path.exists(link_path):
-        os.remove(link_path)
-    try:
-        os.symlink(trio_dataset_path, link_path)
-    except OSError:
-        shutil.copy2(trio_dataset_path, link_path)
-
-    print(f"Dataset do trio pronto: {link_path}")
-    return out_dir
+_ARTIFACTS_FIGURES_DIR = _ARTIFACTS_CONTEXT["figures_dir"]
+_ARTIFACTS_REPORTS_DIR = _ARTIFACTS_CONTEXT["reports_dir"]
+_REPORT_FIG_REF_PREFIX = "../figures"
 
 # Configurações para exibição de dados
 pd.set_option('display.max_columns', None)
@@ -69,12 +28,13 @@ pd.set_option('display.width', 1000)
 plt.style.use('ggplot')
 sns.set(style="whitegrid")
 
-# Carregar datasets do trio a partir do merged local
-path = prepare_trio_dataset_dir()
-print(f"Datasets do trio preparados em: {path}")
+# Download do dataset
+path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data'))
+print(f"Dataset baixado para: {path}")
 
 # Verificar os arquivos no diretório
 files = os.listdir(path)
+files = [f for f in files if f.startswith('CIC-BCCC-NRC-')]
 print("Arquivos disponíveis:")
 for file in files:
     print(f" - {file}")
@@ -255,17 +215,16 @@ with open(os.path.join(path, 'analise_estatistica_resultados.json'), 'w') as f:
 
 print("\nAnálise estatística geral concluída. Resultados salvos para uso em outros notebooks.")
 
-# %%
-"""
 
-"""
+# 
 
-# %%
+# In[ ]:
+
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import kagglehub
 import os
 from zipfile import ZipFile
 import json
@@ -275,8 +234,8 @@ warnings.filterwarnings('ignore')
 
 # Função para criar o relatório completo
 def generate_full_report(df, path, csv_files):
-    # Diretório para imagens (dentro da raiz do projeto)
-    img_dir = os.path.join(os.getcwd(), 'images')
+    # Diretório para imagens (dentro de artifacts)
+    img_dir = _ARTIFACTS_FIGURES_DIR
     if not os.path.exists(img_dir):
         os.makedirs(img_dir)
 
@@ -301,7 +260,7 @@ Este relatório apresenta uma análise estatística detalhada do dataset Edge-II
 O dataset foi obtido do Kaggle, especificamente do conjunto "mohamedamineferrag/edgeiiotset-cyber-security-dataset-of-iot-iiot".
 
 ### 2.2 Processo de Extração
-- Os arquivos foram baixados utilizando a biblioteca `kagglehub`
+- Os arquivos foram carregados a partir do diretório local `data/CIC-BCCC-*`
 - Foi realizada uma verificação recursiva de arquivos CSV em {len(csv_files)} arquivos, tanto em arquivos ZIP quanto em diretórios
 - Os arquivos CSV encontrados foram:
 """
@@ -404,7 +363,7 @@ O dataset foi obtido do Kaggle, especificamente do conjunto "mohamedamineferrag/
             plt.close()
 
             # Referenciar a imagem no relatório markdown
-            class_analysis += f"\n![Distribuição da Classe {col}](images/class_distribution_{col}.png)\n"
+            class_analysis += f"\n![Distribuição da Classe {col}]({_REPORT_FIG_REF_PREFIX}/class_distribution_{col}.png)\n"
 
             # Análise de desbalanceamento
             if len(classe_counts) > 1:
@@ -474,7 +433,7 @@ Recomendação: Verificar a documentação do dataset para identificar qual colu
     plt.savefig(img_path)
     plt.close()
 
-    numeric_analysis += f"\n![Matriz de Correlação](images/correlation_heatmap.png)\n"
+    numeric_analysis += f"\n![Matriz de Correlação]({_REPORT_FIG_REF_PREFIX}/correlation_heatmap.png)\n"
 
     # Identificar correlações mais fortes (positivas e negativas)
     corr_pairs = []
@@ -539,7 +498,7 @@ Recomendação: Verificar a documentação do dataset para identificar qual colu
             outlier_analysis += f"- **Valor mínimo de outlier**: {outliers.min():.2f}\n"
             outlier_analysis += f"- **Valor máximo de outlier**: {outliers.max():.2f}\n"
 
-        outlier_analysis += f"\n![Boxplot para {feature}](images/boxplot_{feature}.png)\n"
+        outlier_analysis += f"\n![Boxplot para {feature}]({_REPORT_FIG_REF_PREFIX}/boxplot_{feature}.png)\n"
 
     report_sections.append(outlier_analysis)
 
@@ -577,7 +536,7 @@ Recomendação: Verificar a documentação do dataset para identificar qual colu
         plt.savefig(img_path)
         plt.close()
 
-        missing_analysis += f"\n![Valores Ausentes](images/missing_values.png)\n"
+        missing_analysis += f"\n![Valores Ausentes]({_REPORT_FIG_REF_PREFIX}/missing_values.png)\n"
 
         # Adicionar recomendações para tratamento
         missing_analysis += """
@@ -691,8 +650,8 @@ Recomendação: Verificar a documentação do dataset para identificar qual colu
     # Juntar todas as seções do relatório
     full_report = "\n".join(report_sections)
 
-    # Salvar o relatório em arquivo markdown na raiz do projeto
-    report_path = os.path.join(os.getcwd(), 'edge_iiotset_analysis_report.md')
+    # Salvar o relatório em artifacts/reports
+    report_path = os.path.join(_ARTIFACTS_REPORTS_DIR, 'edge_iiotset_analysis_report.md')
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(full_report)
 
@@ -700,16 +659,17 @@ Recomendação: Verificar a documentação do dataset para identificar qual colu
     return report_path
 
 # Função principal para executar a análise e gerar o relatório
-def main():
+def run_notebook1_general():
     print("Iniciando análise do dataset Edge-IIoTset...")
 
     try:
-        # Preparar datasets do trio a partir do merged local
-        path = prepare_trio_dataset_dir()
-        print(f"Datasets do trio preparados em: {path}")
+        # Download do dataset
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data'))
+        print(f"Dataset baixado para: {path}")
 
         # Verificar os arquivos no diretório
         files = os.listdir(path)
+        files = [f for f in files if f.startswith('CIC-BCCC-NRC-')]
         print(f"Encontrados {len(files)} arquivos no diretório de download")
 
         # Função para listar conteúdo do arquivo ZIP
@@ -783,18 +743,19 @@ def main():
         traceback.print_exc()
         return None
 
-if __name__ == "__main__":
-    main()
+# In[ ]:
 
-# %%
-report_path = os.path.join(os.getcwd(), 'edge_iiotset_analysis_report.md')
 
-# %%
+report_path = os.path.join(_ARTIFACTS_REPORTS_DIR, 'edge_iiotset_analysis_report.md')
+
+
+# In[9]:
+
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import kagglehub
 import os
 from zipfile import ZipFile
 import json
@@ -920,7 +881,7 @@ Este relatório apresenta uma análise estatística detalhada do dataset {datase
             plt.close()
 
             # Referenciar a imagem no relatório markdown
-            class_analysis += f"\n![Distribuição da Classe {col}](images/{img_name})\n"
+            class_analysis += f"\n![Distribuição da Classe {col}]({_REPORT_FIG_REF_PREFIX}/{img_name})\n"
 
             # Análise de desbalanceamento
             if len(classe_counts) > 1:
@@ -985,7 +946,7 @@ As colunas de classes geralmente têm nomes contendo termos como 'class', 'label
             plt.savefig(img_path)
             plt.close()
 
-            numeric_analysis += f"\n![Matriz de Correlação](images/{img_name})\n"
+            numeric_analysis += f"\n![Matriz de Correlação]({_REPORT_FIG_REF_PREFIX}/{img_name})\n"
 
             # Identificar correlações mais fortes (positivas e negativas)
             corr_pairs = []
@@ -1049,7 +1010,7 @@ As colunas de classes geralmente têm nomes contendo termos como 'class', 'label
         plt.savefig(img_path)
         plt.close()
 
-        missing_analysis += f"\n![Valores Ausentes](images/{img_name})\n"
+        missing_analysis += f"\n![Valores Ausentes]({_REPORT_FIG_REF_PREFIX}/{img_name})\n"
 
         missing_analysis += """
 ### Recomendações para Tratamento de Valores Ausentes:
@@ -1128,7 +1089,7 @@ def generate_consolidated_report(dataset_reports, csv_files):
         str: Caminho do relatório consolidado
     """
     # Diretório de saída
-    output_dir = os.getcwd()
+    output_dir = _ARTIFACTS_REPORTS_DIR
 
     # Criar o relatório consolidado
     consolidated_report = f"""# Relatório Consolidado de Análise do Edge-IIoTset
@@ -1158,16 +1119,17 @@ Esta análise inclui {len(csv_files)} arquivos CSV do dataset Edge-IIoTset, que 
     return consolidated_path
 
 # Função principal para executar a análise e gerar o relatório
-def main():
+def run_notebook1_multidataset():
     print("Iniciando análise do dataset Edge-IIoTset para todos os arquivos CSV...")
 
     try:
-        # Preparar datasets do trio a partir do merged local
-        path = prepare_trio_dataset_dir()
-        print(f"Datasets do trio preparados em: {path}")
+        # Download do dataset
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data'))
+        print(f"Dataset baixado para: {path}")
 
         # Verificar os arquivos no diretório
         files = os.listdir(path)
+        files = [f for f in files if f.startswith('CIC-BCCC-NRC-')]
         print(f"Encontrados {len(files)} arquivos no diretório de download")
 
         # Função para listar conteúdo do arquivo ZIP
@@ -1225,7 +1187,7 @@ def main():
         print(f"Total de arquivos CSV encontrados: {len(csv_files)}")
 
         # Diretório para imagens
-        img_dir = os.path.join(os.getcwd(), 'images')
+        img_dir = _ARTIFACTS_FIGURES_DIR
         if not os.path.exists(img_dir):
             os.makedirs(img_dir)
 
@@ -1247,7 +1209,7 @@ def main():
 
                 # Salvar o relatório em arquivo markdown
                 report_filename = f"report_{os.path.splitext(dataset_name)[0]}.md"
-                report_path = os.path.join(os.getcwd(), report_filename)
+                report_path = os.path.join(_ARTIFACTS_REPORTS_DIR, report_filename)
                 with open(report_path, 'w', encoding='utf-8') as f:
                     f.write(report_content)
 
@@ -1273,10 +1235,21 @@ def main():
         traceback.print_exc()
         return None
 
-if __name__ == "__main__":
-    main()
+def run_notebook1_story():
+    run_notebook1_general()
+    return run_notebook1_multidataset()
 
-# %%
+
+if __name__ == "__main__":
+    run_notebook1_story()
+    if os.environ.get("QCYBER_RUN_INLINE_NOTEBOOKS", "0") != "1":
+        print("Inline notebook cells 2/3 skipped. Set QCYBER_RUN_INLINE_NOTEBOOKS=1 to execute them.")
+        raise SystemExit(0)
+
+
+# In[ ]:
+
+
 # Notebook 2: Análise Estrutural Específica para Computação Quântica
 import pandas as pd
 import numpy as np
@@ -1316,10 +1289,12 @@ try:
 
 except FileNotFoundError:
     print("Arquivo de resultados não encontrado. Executando procedimento alternativo para carregar o dataset.")
-    path = prepare_trio_dataset_dir()
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data'))
 
     # Procurar por arquivos CSV no diretório
     for root, dirs, files in os.walk(path):
+        if 'CIC-BCCC-NRC-' not in root:
+            continue
         for file in files:
             if file.endswith('.csv'):
                 df = pd.read_csv(os.path.join(root, file))
@@ -1562,179 +1537,179 @@ for feature in selected_features[:3]:
 
 print("\nAnálise estrutural para computação quântica concluída.")
 
-# %%
-"""
-# Relatório de Análise Estatística do Dataset Edge-IIoTset
-*Gerado em: 20-03-2025 17:45:02*
 
-## 1. Introdução
+# # Relatório de Análise Estatística do Dataset Edge-IIoTset
+# *Gerado em: 20-03-2025 17:45:02*
+# 
+# ## 1. Introdução
+# 
+# Este relatório apresenta uma análise estatística detalhada do dataset Edge-IIoTset, que contém dados relacionados à segurança cibernética em ambientes de IoT (Internet das Coisas) e IIoT (Internet das Coisas Industrial). A análise foi conduzida utilizando Python com as bibliotecas pandas, numpy, matplotlib e seaborn.
+# 
+# 
+# ## 2. Aquisição e Preparação dos Dados
+# 
+# ### 2.1 Fonte dos Dados
+# O dataset foi obtido do Kaggle, especificamente do conjunto "mohamedamineferrag/edgeiiotset-cyber-security-dataset-of-iot-iiot".
+# 
+# ### 2.2 Processo de Extração
+# - Os arquivos foram carregados a partir do diretório local `data/CIC-BCCC-*`
+# - Foi realizada uma verificação recursiva de arquivos CSV em 26 arquivos, tanto em arquivos ZIP quanto em diretórios
+# - Os arquivos CSV encontrados foram:
+#   - Distance.csv
+#   - Temperature_and_Humidity.csv
+#   - Flame_Sensor.csv
+#   - Sound_Sensor.csv
+#   - Heart_Rate.csv
+#   - ... e mais 21 arquivos
+# 
+# 
+# ## 3. Características Gerais do Dataset
+# 
+# ### 3.1 Dimensões
+# - **Total de Registros**: 1,143,540
+# - **Total de Features**: 63
+# 
+# ### 3.2 Tipos de Variáveis
+# - **Variáveis Numéricas**: 47
+# - **Variáveis Categóricas**: 16
+# - **Variáveis Binárias**: 10
+# 
+# #### Exemplo de Variáveis por Tipo:
+# **Numéricas**: arp.opcode, arp.hw.size, icmp.checksum, icmp.seq_le, icmp.transmit_timestamp e mais 42
+# 
+# **Categóricas**: frame.time, ip.src_host, ip.dst_host, arp.dst.proto_ipv4, arp.src.proto_ipv4 e mais 11
+# 
+# **Binárias**: arp.hw.size, tcp.connection.fin, tcp.connection.rst, tcp.connection.syn, tcp.connection.synack e mais 5
+# 
+# 
+# ## 4. Análise de Classes/Ataques
+# ### 4.1 Distribuição das Classes
+# 
+# #### Classe: Attack_label
+# | Valor | Contagem | Percentual |
+# |-------|----------|------------|
+# | 0 | 1,143,540 | 100.00% |
+# 
+# ![Distribuição da Classe Attack_label](images/class_distribution_Attack_label.png)
+# 
+# #### Classe: Attack_type
+# | Valor | Contagem | Percentual |
+# |-------|----------|------------|
+# | Normal | 1,143,540 | 100.00% |
+# 
+# ![Distribuição da Classe Attack_type](images/class_distribution_Attack_type.png)
+# 
+# 
+# ## 5. Análise Estatística das Features Numéricas
+# 
+# ### 5.1 Estatísticas Descritivas
+# | Feature | Contagem | Média | Desvio Padrão | Mínimo | 25% | 50% (Mediana) | 75% | Máximo |
+# |---------|----------|-------|---------------|--------|-----|--------------|-----|--------|
+# | arp.opcode | 1,143,540 | 0.00 | 0.01 | 0.00 | 0.00 | 0.00 | 0.00 | 2.00 |
+# | arp.hw.size | 1,143,540 | 0.00 | 0.04 | 0.00 | 0.00 | 0.00 | 0.00 | 6.00 |
+# | icmp.checksum | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | icmp.seq_le | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | icmp.transmit_timestamp | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | icmp.unused | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.file_data | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.content_length | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.request.uri.query | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.request.method | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# 
+# *Nota: Apenas as 10 primeiras features numéricas são exibidas de um total de 47.*
+# 
+# ### 5.2 Correlação entre Features
+# 
+# ![Matriz de Correlação](images/correlation_heatmap.png)
+# 
+# #### Correlações Significativas Identificadas:
+# | Feature 1 | Feature 2 | Correlação |
+# |-----------|-----------|------------|
+# | arp.opcode | arp.hw.size | 0.9846 |
+# 
+# 
+# ## 6. Análise de Outliers
+# 
+# ### Feature: arp.opcode
+# - **Outliers detectados**: 57 (0.00% dos registros)
+# - **Limite inferior**: 0.00
+# - **Limite superior**: 0.00
+# - **Valor mínimo de outlier**: 1.00
+# - **Valor máximo de outlier**: 2.00
+# 
+# ![Boxplot para arp.opcode](images/boxplot_arp.opcode.png)
+# 
+# ### Feature: arp.hw.size
+# - **Outliers detectados**: 57 (0.00% dos registros)
+# - **Limite inferior**: 0.00
+# - **Limite superior**: 0.00
+# - **Valor mínimo de outlier**: 6.00
+# - **Valor máximo de outlier**: 6.00
+# 
+# ![Boxplot para arp.hw.size](images/boxplot_arp.hw.size.png)
+# 
+# ### Feature: icmp.checksum
+# - **Outliers detectados**: 0 (0.00% dos registros)
+# - **Limite inferior**: 0.00
+# - **Limite superior**: 0.00
+# 
+# ![Boxplot para icmp.checksum](images/boxplot_icmp.checksum.png)
+# 
+# ### Feature: icmp.seq_le
+# - **Outliers detectados**: 0 (0.00% dos registros)
+# - **Limite inferior**: 0.00
+# - **Limite superior**: 0.00
+# 
+# ![Boxplot para icmp.seq_le](images/boxplot_icmp.seq_le.png)
+# 
+# ### Feature: icmp.transmit_timestamp
+# - **Outliers detectados**: 0 (0.00% dos registros)
+# - **Limite inferior**: 0.00
+# - **Limite superior**: 0.00
+# 
+# ![Boxplot para icmp.transmit_timestamp](images/boxplot_icmp.transmit_timestamp.png)
+# 
+# 
+# ## 7. Análise de Valores Ausentes
+# 
+# Não foram encontrados valores ausentes no dataset analisado.
+# 
+# 
+# ## 8. Conclusões e Próximos Passos
+# 
+# ### 8.1 Principais Conclusões
+# - O dataset Edge-IIoTset contém dados relacionados à segurança cibernética em ambientes IoT e IIoT
+# - Foram analisados 1,143,540 registros com 63 features
+# - Foram identificadas 2 colunas de classe/tipo de ataque
+# - Foram identificadas 1 correlações fortes entre features
+# - O dataset não apresenta valores ausentes
+# 
+# ### 8.2 Recomendações para Análises Futuras
+# 
+# - **Pré-processamento de Dados**:
+#   - Tratar valores ausentes conforme recomendado na seção 7
+#   - Normalizar ou padronizar features numéricas para melhorar desempenho de algoritmos
+#   - Tratar outliers através de técnicas como winsorização ou transformações logarítmicas
+# 
+# - **Engenharia de Features**:
+#   - Investigar possíveis combinações ou transformações de features existentes
+#   - Reduzir dimensionalidade através de PCA ou seleção de features para melhorar desempenho
+# 
+# - **Modelagem**:
+# 
+# - **Avaliação e Interpretação**:
+#   - Aplicar validação cruzada para avaliar robustez dos modelos
+#   - Analisar importância de features para identificar quais são mais relevantes na detecção de ataques
+#   - Implementar explicabilidade (SHAP, LIME) para entender decisões dos modelos
+# 
+# - **Implementação em Ambientes Reais**:
+#   - Estabelecer pipeline de monitoramento para detectar drift nos dados
+#   - Avaliar desempenho computacional para implementação em dispositivos edge
+# 
 
-Este relatório apresenta uma análise estatística detalhada do dataset Edge-IIoTset, que contém dados relacionados à segurança cibernética em ambientes de IoT (Internet das Coisas) e IIoT (Internet das Coisas Industrial). A análise foi conduzida utilizando Python com as bibliotecas pandas, numpy, matplotlib e seaborn.
+# In[ ]:
 
 
-## 2. Aquisição e Preparação dos Dados
-
-### 2.1 Fonte dos Dados
-O dataset foi obtido do Kaggle, especificamente do conjunto "mohamedamineferrag/edgeiiotset-cyber-security-dataset-of-iot-iiot".
-
-### 2.2 Processo de Extração
-- Os arquivos foram baixados utilizando a biblioteca `kagglehub`
-- Foi realizada uma verificação recursiva de arquivos CSV em 26 arquivos, tanto em arquivos ZIP quanto em diretórios
-- Os arquivos CSV encontrados foram:
-  - Distance.csv
-  - Temperature_and_Humidity.csv
-  - Flame_Sensor.csv
-  - Sound_Sensor.csv
-  - Heart_Rate.csv
-  - ... e mais 21 arquivos
-
-
-## 3. Características Gerais do Dataset
-
-### 3.1 Dimensões
-- **Total de Registros**: 1,143,540
-- **Total de Features**: 63
-
-### 3.2 Tipos de Variáveis
-- **Variáveis Numéricas**: 47
-- **Variáveis Categóricas**: 16
-- **Variáveis Binárias**: 10
-
-#### Exemplo de Variáveis por Tipo:
-**Numéricas**: arp.opcode, arp.hw.size, icmp.checksum, icmp.seq_le, icmp.transmit_timestamp e mais 42
-
-**Categóricas**: frame.time, ip.src_host, ip.dst_host, arp.dst.proto_ipv4, arp.src.proto_ipv4 e mais 11
-
-**Binárias**: arp.hw.size, tcp.connection.fin, tcp.connection.rst, tcp.connection.syn, tcp.connection.synack e mais 5
-
-
-## 4. Análise de Classes/Ataques
-### 4.1 Distribuição das Classes
-
-#### Classe: Attack_label
-| Valor | Contagem | Percentual |
-|-------|----------|------------|
-| 0 | 1,143,540 | 100.00% |
-
-![Distribuição da Classe Attack_label](images/class_distribution_Attack_label.png)
-
-#### Classe: Attack_type
-| Valor | Contagem | Percentual |
-|-------|----------|------------|
-| Normal | 1,143,540 | 100.00% |
-
-![Distribuição da Classe Attack_type](images/class_distribution_Attack_type.png)
-
-
-## 5. Análise Estatística das Features Numéricas
-
-### 5.1 Estatísticas Descritivas
-| Feature | Contagem | Média | Desvio Padrão | Mínimo | 25% | 50% (Mediana) | 75% | Máximo |
-|---------|----------|-------|---------------|--------|-----|--------------|-----|--------|
-| arp.opcode | 1,143,540 | 0.00 | 0.01 | 0.00 | 0.00 | 0.00 | 0.00 | 2.00 |
-| arp.hw.size | 1,143,540 | 0.00 | 0.04 | 0.00 | 0.00 | 0.00 | 0.00 | 6.00 |
-| icmp.checksum | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| icmp.seq_le | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| icmp.transmit_timestamp | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| icmp.unused | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.file_data | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.content_length | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.request.uri.query | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.request.method | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-
-*Nota: Apenas as 10 primeiras features numéricas são exibidas de um total de 47.*
-
-### 5.2 Correlação entre Features
-
-![Matriz de Correlação](images/correlation_heatmap.png)
-
-#### Correlações Significativas Identificadas:
-| Feature 1 | Feature 2 | Correlação |
-|-----------|-----------|------------|
-| arp.opcode | arp.hw.size | 0.9846 |
-
-
-## 6. Análise de Outliers
-
-### Feature: arp.opcode
-- **Outliers detectados**: 57 (0.00% dos registros)
-- **Limite inferior**: 0.00
-- **Limite superior**: 0.00
-- **Valor mínimo de outlier**: 1.00
-- **Valor máximo de outlier**: 2.00
-
-![Boxplot para arp.opcode](images/boxplot_arp.opcode.png)
-
-### Feature: arp.hw.size
-- **Outliers detectados**: 57 (0.00% dos registros)
-- **Limite inferior**: 0.00
-- **Limite superior**: 0.00
-- **Valor mínimo de outlier**: 6.00
-- **Valor máximo de outlier**: 6.00
-
-![Boxplot para arp.hw.size](images/boxplot_arp.hw.size.png)
-
-### Feature: icmp.checksum
-- **Outliers detectados**: 0 (0.00% dos registros)
-- **Limite inferior**: 0.00
-- **Limite superior**: 0.00
-
-![Boxplot para icmp.checksum](images/boxplot_icmp.checksum.png)
-
-### Feature: icmp.seq_le
-- **Outliers detectados**: 0 (0.00% dos registros)
-- **Limite inferior**: 0.00
-- **Limite superior**: 0.00
-
-![Boxplot para icmp.seq_le](images/boxplot_icmp.seq_le.png)
-
-### Feature: icmp.transmit_timestamp
-- **Outliers detectados**: 0 (0.00% dos registros)
-- **Limite inferior**: 0.00
-- **Limite superior**: 0.00
-
-![Boxplot para icmp.transmit_timestamp](images/boxplot_icmp.transmit_timestamp.png)
-
-
-## 7. Análise de Valores Ausentes
-
-Não foram encontrados valores ausentes no dataset analisado.
-
-
-## 8. Conclusões e Próximos Passos
-
-### 8.1 Principais Conclusões
-- O dataset Edge-IIoTset contém dados relacionados à segurança cibernética em ambientes IoT e IIoT
-- Foram analisados 1,143,540 registros com 63 features
-- Foram identificadas 2 colunas de classe/tipo de ataque
-- Foram identificadas 1 correlações fortes entre features
-- O dataset não apresenta valores ausentes
-
-### 8.2 Recomendações para Análises Futuras
-
-- **Pré-processamento de Dados**:
-  - Tratar valores ausentes conforme recomendado na seção 7
-  - Normalizar ou padronizar features numéricas para melhorar desempenho de algoritmos
-  - Tratar outliers através de técnicas como winsorização ou transformações logarítmicas
-
-- **Engenharia de Features**:
-  - Investigar possíveis combinações ou transformações de features existentes
-  - Reduzir dimensionalidade através de PCA ou seleção de features para melhorar desempenho
-
-- **Modelagem**:
-
-- **Avaliação e Interpretação**:
-  - Aplicar validação cruzada para avaliar robustez dos modelos
-  - Analisar importância de features para identificar quais são mais relevantes na detecção de ataques
-  - Implementar explicabilidade (SHAP, LIME) para entender decisões dos modelos
-
-- **Implementação em Ambientes Reais**:
-  - Estabelecer pipeline de monitoramento para detectar drift nos dados
-  - Avaliar desempenho computacional para implementação em dispositivos edge
-
-"""
-
-# %%
 # Notebook 3: Análise Detalhada das Classes e Modelagem Preliminar
 import pandas as pd
 import numpy as np
@@ -1778,10 +1753,12 @@ try:
 
 except FileNotFoundError:
     print("Arquivo de resultados não encontrado. Executando procedimento alternativo para carregar o dataset.")
-    path = prepare_trio_dataset_dir()
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data'))
 
     # Procurar por arquivos CSV no diretório
     for root, dirs, files in os.walk(path):
+        if 'CIC-BCCC-NRC-' not in root:
+            continue
         for file in files:
             if file.endswith('.csv'):
                 df = pd.read_csv(os.path.join(root, file))
@@ -1871,8 +1848,8 @@ if class_columns:
     # Análise de Correlação com a Variável Alvo
     print("\n===== CORRELAÇÃO COM A VARIÁVEL ALVO =====")
 
-    # Se a variável alvo for categórica, criar dummies para análise de correlação
-    if df[target_col].dtype == 'object':
+    # Se a variável alvo não for numérica, criar dummies para análise de correlação
+    if not pd.api.types.is_numeric_dtype(df[target_col]):
         target_dummies = pd.get_dummies(df[target_col], prefix='class')
         # Concatenar com features numéricas para calcular correlação
         corr_df = pd.concat([df[num_features], target_dummies], axis=1)
@@ -1888,7 +1865,8 @@ if class_columns:
             print(corrs.head(10))
     else:
         # Se for numérica, calcular correlação diretamente
-        feature_correlations = df[num_features].corrwith(df[target_col]).sort_values(ascending=False)
+        target_numeric = pd.to_numeric(df[target_col], errors='coerce')
+        feature_correlations = df[num_features].corrwith(target_numeric).sort_values(ascending=False)
         print("\nTop 10 features mais correlacionadas com a variável alvo:")
         print(feature_correlations.head(10))
         print("\nTop 10 features menos correlacionadas com a variável alvo:")
@@ -2062,16 +2040,19 @@ if class_columns:
         X_train_svm = X_train_scaled[indices]
         y_train_svm = y_train[indices]
 
-        svm = SVC(kernel='rbf', C=1.0, gamma='scale', random_state=42)
-        svm.fit(X_train_svm, y_train_svm)
+        if len(np.unique(y_train_svm)) < 2:
+            print("SVM pulado: treino possui apenas uma classe.")
+        else:
+            svm = SVC(kernel='rbf', C=1.0, gamma='scale', random_state=42)
+            svm.fit(X_train_svm, y_train_svm)
 
-        y_pred_svm = svm.predict(X_test_scaled)
+            y_pred_svm = svm.predict(X_test_scaled)
 
-        print(f"Acurácia no conjunto de teste: {accuracy_score(y_test, y_pred_svm):.4f}")
+            print(f"Acurácia no conjunto de teste: {accuracy_score(y_test, y_pred_svm):.4f}")
 
-        # Relatório de classificação detalhado
-        print("\nRelatório de Classificação (SVM):")
-        print(classification_report(y_test, y_pred_svm, target_names=class_names))
+            # Relatório de classificação detalhado
+            print("\nRelatório de Classificação (SVM):")
+            print(classification_report(y_test, y_pred_svm, target_names=class_names))
     else:
         print("\nNão executando SVM devido ao grande número de classes.")
 
@@ -2195,93 +2176,91 @@ else:
 
     print("\nAnálise de clustering não supervisionado concluída.")
 
-# %%
-"""
-# Relatório de Análise Estatística: Distance.csv
-*Gerado em: 20-03-2025 17:50:19*
 
-## 1. Introdução
-
-Este relatório apresenta uma análise estatística detalhada do dataset Distance.csv, que faz parte do conjunto Edge-IIoTset relacionado à segurança cibernética em ambientes de IoT (Internet das Coisas) e IIoT (Internet das Coisas Industrial).
-
-
-## 2. Características Gerais do Dataset
-
-### 2.1 Dimensões
-- **Nome do Arquivo**: Distance.csv
-- **Total de Registros**: 1,143,540
-- **Total de Features**: 63
-
-### 2.2 Tipos de Variáveis
-- **Variáveis Numéricas**: 47
-- **Variáveis Categóricas**: 16
-- **Variáveis Binárias**: 10
-
-#### Exemplo de Variáveis por Tipo:
-**Numéricas**: arp.opcode, arp.hw.size, icmp.checksum, icmp.seq_le, icmp.transmit_timestamp e mais 42
-
-**Categóricas**: frame.time, ip.src_host, ip.dst_host, arp.dst.proto_ipv4, arp.src.proto_ipv4 e mais 11
-
-**Binárias**: arp.hw.size, tcp.connection.fin, tcp.connection.rst, tcp.connection.syn, tcp.connection.synack e mais 5
-
-
-## 3. Análise de Classes/Ataques
-### 3.1 Distribuição das Classes
-
-#### Classe: Attack_label
-| Valor | Contagem | Percentual |
-|-------|----------|------------|
-| 0 | 1,143,540 | 100.00% |
-
-![Distribuição da Classe Attack_label](images/Distance_class_Attack_label.png)
-
-#### Classe: Attack_type
-| Valor | Contagem | Percentual |
-|-------|----------|------------|
-| Normal | 1,143,540 | 100.00% |
-
-![Distribuição da Classe Attack_type](images/Distance_class_Attack_type.png)
-
-
-## 4. Análise Estatística das Features Numéricas
-
-### 4.1 Estatísticas Descritivas
-| Feature | Contagem | Média | Desvio Padrão | Mínimo | 25% | 50% (Mediana) | 75% | Máximo |
-|---------|----------|-------|---------------|--------|-----|--------------|-----|--------|
-| arp.opcode | 1,143,540 | 0.00 | 0.01 | 0.00 | 0.00 | 0.00 | 0.00 | 2.00 |
-| arp.hw.size | 1,143,540 | 0.00 | 0.04 | 0.00 | 0.00 | 0.00 | 0.00 | 6.00 |
-| icmp.checksum | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| icmp.seq_le | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| icmp.transmit_timestamp | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| icmp.unused | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.file_data | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.content_length | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.request.uri.query | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| http.request.method | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-
-*Nota: Apenas as 10 primeiras features numéricas são exibidas de um total de 47.*
-
-### 4.2 Correlação entre Features
-
-![Matriz de Correlação](images/Distance_correlation.png)
-
-#### Correlações Significativas Identificadas:
-| Feature 1 | Feature 2 | Correlação |
-|-----------|-----------|------------|
-| arp.opcode | arp.hw.size | 0.9846 |
-
-
-## 5. Análise de Valores Ausentes
-
-Não foram encontrados valores ausentes no dataset analisado.
-
-
-## 6. Conclusões
-
-### 6.1 Resumo da Análise
-- O dataset contém 1,143,540 registros com 63 features
-- Foram identificadas 2 colunas de classe/tipo de ataque
-- Foram identificadas 1 correlações fortes entre features
-- O dataset não apresenta valores ausentes
-
-"""
+# # Relatório de Análise Estatística: Distance.csv
+# *Gerado em: 20-03-2025 17:50:19*
+# 
+# ## 1. Introdução
+# 
+# Este relatório apresenta uma análise estatística detalhada do dataset Distance.csv, que faz parte do conjunto Edge-IIoTset relacionado à segurança cibernética em ambientes de IoT (Internet das Coisas) e IIoT (Internet das Coisas Industrial).
+# 
+# 
+# ## 2. Características Gerais do Dataset
+# 
+# ### 2.1 Dimensões
+# - **Nome do Arquivo**: Distance.csv
+# - **Total de Registros**: 1,143,540
+# - **Total de Features**: 63
+# 
+# ### 2.2 Tipos de Variáveis
+# - **Variáveis Numéricas**: 47
+# - **Variáveis Categóricas**: 16
+# - **Variáveis Binárias**: 10
+# 
+# #### Exemplo de Variáveis por Tipo:
+# **Numéricas**: arp.opcode, arp.hw.size, icmp.checksum, icmp.seq_le, icmp.transmit_timestamp e mais 42
+# 
+# **Categóricas**: frame.time, ip.src_host, ip.dst_host, arp.dst.proto_ipv4, arp.src.proto_ipv4 e mais 11
+# 
+# **Binárias**: arp.hw.size, tcp.connection.fin, tcp.connection.rst, tcp.connection.syn, tcp.connection.synack e mais 5
+# 
+# 
+# ## 3. Análise de Classes/Ataques
+# ### 3.1 Distribuição das Classes
+# 
+# #### Classe: Attack_label
+# | Valor | Contagem | Percentual |
+# |-------|----------|------------|
+# | 0 | 1,143,540 | 100.00% |
+# 
+# ![Distribuição da Classe Attack_label](images/Distance_class_Attack_label.png)
+# 
+# #### Classe: Attack_type
+# | Valor | Contagem | Percentual |
+# |-------|----------|------------|
+# | Normal | 1,143,540 | 100.00% |
+# 
+# ![Distribuição da Classe Attack_type](images/Distance_class_Attack_type.png)
+# 
+# 
+# ## 4. Análise Estatística das Features Numéricas
+# 
+# ### 4.1 Estatísticas Descritivas
+# | Feature | Contagem | Média | Desvio Padrão | Mínimo | 25% | 50% (Mediana) | 75% | Máximo |
+# |---------|----------|-------|---------------|--------|-----|--------------|-----|--------|
+# | arp.opcode | 1,143,540 | 0.00 | 0.01 | 0.00 | 0.00 | 0.00 | 0.00 | 2.00 |
+# | arp.hw.size | 1,143,540 | 0.00 | 0.04 | 0.00 | 0.00 | 0.00 | 0.00 | 6.00 |
+# | icmp.checksum | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | icmp.seq_le | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | icmp.transmit_timestamp | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | icmp.unused | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.file_data | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.content_length | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.request.uri.query | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# | http.request.method | 1,143,540 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+# 
+# *Nota: Apenas as 10 primeiras features numéricas são exibidas de um total de 47.*
+# 
+# ### 4.2 Correlação entre Features
+# 
+# ![Matriz de Correlação](images/Distance_correlation.png)
+# 
+# #### Correlações Significativas Identificadas:
+# | Feature 1 | Feature 2 | Correlação |
+# |-----------|-----------|------------|
+# | arp.opcode | arp.hw.size | 0.9846 |
+# 
+# 
+# ## 5. Análise de Valores Ausentes
+# 
+# Não foram encontrados valores ausentes no dataset analisado.
+# 
+# 
+# ## 6. Conclusões
+# 
+# ### 6.1 Resumo da Análise
+# - O dataset contém 1,143,540 registros com 63 features
+# - Foram identificadas 2 colunas de classe/tipo de ataque
+# - Foram identificadas 1 correlações fortes entre features
+# - O dataset não apresenta valores ausentes
+# 

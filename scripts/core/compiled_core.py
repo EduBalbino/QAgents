@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-import os
-import optax
 import pennylane as qml
 import catalyst
 from catalyst import qjit
@@ -27,37 +25,34 @@ def get_compiled_core(
     num_qubits: int,
     num_layers: int,
     backend: Backend,
-    spec_hash: str,
-    shape_key: tuple,
+    *,
+    batch_size: int,
+    feature_dim: int,
     encoder_name: str = "angle_embedding_y",
     ansatz_name: str = "strongly_entangling",
     measurement_name: str = "z0",
     measurement_wires: tuple[int, ...] = (0,),
     hadamard: bool = False,
     reupload: bool = False,
-    num_batches: Optional[int] = None,
-    batch_size: Optional[int] = None,
+    focal_gamma: float = 0.0,
+    alpha_mode: str = "softplus",
 ) -> Dict[str, Callable]:
-    if num_batches is None:
-        num_batches = 1
-    if batch_size is None:
-        batch_size = int(shape_key[0]) if len(shape_key) > 0 else 1
     cache_key = (
         num_qubits,
         num_layers,
+        int(batch_size),
+        int(feature_dim),
         backend.device_name,
         str(backend.dtype),
         tuple(sorted(backend.compile_opts.items())),
-        spec_hash,
-        shape_key,
         encoder_name,
         ansatz_name,
         measurement_name,
         tuple(measurement_wires),
         bool(hadamard),
         bool(reupload),
-        num_batches,
-        batch_size,
+        float(focal_gamma),
+        str(alpha_mode),
     )
     cached = _CORE_CACHE.get(cache_key)
     if cached is not None:
@@ -72,8 +67,8 @@ def get_compiled_core(
         measurement_wires=measurement_wires,
         hadamard=hadamard,
         reupload=reupload,
-        num_batches=num_batches,
-        batch_size=batch_size,
+        focal_gamma=focal_gamma,
+        alpha_mode=alpha_mode,
     )
     _CORE_CACHE[cache_key] = compiled
     return compiled
@@ -89,16 +84,16 @@ def build_compiled_core(
     measurement_wires: tuple[int, ...],
     hadamard: bool,
     reupload: bool,
-    num_batches: int,
-    batch_size: int,
+    focal_gamma: float,
+    alpha_mode: str,
 ) -> Dict[str, Callable]:
     dev_kwargs: Dict[str, Any] = {}
     if backend.device_name.startswith("lightning."):
-        # lightning simulators default to complex128; complex64 is usually faster for training.
-        c_dtype_env = os.environ.get("EDGE_LIGHTNING_C_DTYPE", "complex64").strip().lower()
-        dev_kwargs["c_dtype"] = np.complex128 if c_dtype_env == "complex128" else np.complex64
+        # Use complex64 deterministically; do not depend on env var overrides.
+        dev_kwargs["c_dtype"] = np.complex64
     if backend.device_name == "lightning.gpu":
-        dev_kwargs["use_async"] = os.environ.get("EDGE_LIGHTNING_ASYNC", "1") != "0"
+        # Deterministic default: async execution enabled.
+        dev_kwargs["use_async"] = True
     dev = qml.device(backend.device_name, wires=num_qubits, **dev_kwargs)
 
     def _rot_as_rz_ry_rz(phi, theta, omega, wire: int) -> None:
@@ -162,8 +157,20 @@ def build_compiled_core(
 
         raise ValueError(f"Unsupported ansatz for compiled core: {ansatz_name}")
 
+    def _apply_readout_layer_rot(w_ro) -> None:
+        # Trainable post-processing layer using gate parameters (supported by adjoint).
+        #
+        # Per-wire Rot makes the measured axis an arbitrary Bloch direction, i.e.
+        # U^\dagger Z U = a X + b Y + c Z.
+        for i, w in enumerate(meas_ws):
+            j = 3 * i
+            # Avoid qml.Rot here; some Lightning adjoint paths (esp under Catalyst)
+            # have incomplete support for it. Use the explicit RZ/RY/RZ decomposition
+            # already used by the ansatz.
+            _rot_as_rz_ry_rz(w_ro[j + 0], w_ro[j + 1], w_ro[j + 2], w)
+
     @qml.qnode(dev, interface="jax", diff_method="adjoint")
-    def qnode_forward(weights, x):
+    def qnode_forward(weights, x, w_ro):
         if reupload:
             for l in range(num_layers):
                 _apply_encoder(x)
@@ -179,100 +186,97 @@ def build_compiled_core(
             coeffs = [1.0 / float(len(meas_ws))] * len(meas_ws)
             observables = [qml.PauliZ(w) for w in meas_ws]
             return qml.expval(qml.Hamiltonian(coeffs, observables))
+        if measurement_name == "mean_z_readout":
+            _apply_readout_layer_rot(w_ro)
+            coeffs = [1.0 / float(len(meas_ws))] * len(meas_ws)
+            observables = [qml.PauliZ(w) for w in meas_ws]
+            return qml.expval(qml.Hamiltonian(coeffs, observables))
+        if measurement_name == "z_vec":
+            # Project the Z-vector via Hamiltonian coefficients. This keeps the QNode output
+            # scalar (important for Catalyst stability). Note: some Catalyst versions have
+            # limited support for differentiating w.r.t. Hamiltonian coefficients, so callers
+            # should not rely on `w_ro` being learnable; initialize it sensibly.
+            coeffs = w_ro
+            observables = [qml.PauliZ(w) for w in meas_ws]
+            return qml.expval(qml.Hamiltonian(coeffs, observables))
         raise ValueError(f"Unsupported measurement for compiled core: {measurement_name}")
 
     qnode_compiled = qjit(qnode_forward, **backend.compile_opts)
 
-    def _batch_logits(weights, bias, alpha, xb):
-        def _scan_body(_, x):
-            logit = jnp.asarray(alpha * qnode_forward(weights, x) + bias, dtype=backend.dtype)
-            return None, logit
+    focal_gamma = float(focal_gamma or 0.0)
+    alpha_mode = str(alpha_mode or "softplus").strip().lower()
+    if alpha_mode not in ("direct", "softplus"):
+        alpha_mode = "softplus"
 
-        _, logits = jax.lax.scan(_scan_body, None, xb)
-        return logits
+    def _scan_expvals(weights, w_ro, xb):
+        # NOTE: Catalyst does not implement a batching rule for `qinst`, so `jax.vmap`
+        # over a qjit-compiled QNode fails with:
+        #   NotImplementedError: Batching rule for 'qinst' not implemented
+        # Use `lax.scan` instead (sequential over batch) to stay within supported transforms.
+        def _step(carry, x):
+            ev = qnode_compiled(weights, x, w_ro)
+            ev = jnp.asarray(ev, dtype=backend.dtype)
+            return carry, ev
 
-    def batched_forward(weights, X_batch):
-        def _scan_body(_, x):
-            return None, qnode_compiled(weights, x)
+        carry0 = jnp.asarray(0, dtype=backend.dtype)
+        _, evs = jax.lax.scan(_step, carry0, xb)
+        return evs
 
-        _, preds = jax.lax.scan(_scan_body, None, X_batch)
-        return preds
-
-    def bce_with_logits(logits, targets01, sample_weights):
-        logits = jnp.asarray(logits, dtype=backend.dtype)
-        y = jnp.asarray(targets01, dtype=backend.dtype)
-        sample_weights = jnp.asarray(sample_weights, dtype=backend.dtype)
-        # Numerically stable BCE with logits: softplus(logit) - y*logit
-        loss = jax.nn.softplus(logits) - y * logits
-        return jnp.mean(sample_weights * loss)
-
-    adam_tx = optax.scale_by_adam()
-
-    def init_opt_state(params):
-        return adam_tx.init(params)
-
-    def _batch_loss_map(weights, bias, alpha, xb, yb, wb):
+    def _batch_logits(weights, w_ro, bias, xb):
         xb = jnp.asarray(xb, dtype=backend.dtype)
-        yb = jnp.asarray(yb, dtype=backend.dtype)
-        wb = jnp.asarray(wb, dtype=backend.dtype)
-        logits = _batch_logits(weights, bias, alpha, xb)
-        return bce_with_logits(logits, yb, wb)
+        w_ro = jnp.asarray(w_ro, dtype=backend.dtype)
+        evs = _scan_expvals(weights, w_ro, xb)  # (B,)
+        bias = jnp.asarray(bias, dtype=backend.dtype)  # ()
+        logits_raw = evs + bias  # (B,)
+        return jnp.asarray(logits_raw, dtype=backend.dtype)
 
-    _batch_grad = catalyst.grad(_batch_loss_map, argnums=(0, 1, 2))
+    def batched_forward(weights, w_ro, X):
+        X = jnp.asarray(X, dtype=backend.dtype)
+        w_ro = jnp.asarray(w_ro, dtype=backend.dtype)
+        return _scan_expvals(weights, w_ro, X)
 
     @qjit(**backend.compile_opts)
-    def train_epoch_compiled(train_state, key, X_steps, y01_steps, w_steps, lr_t):
-        params, opt_state = train_state
-        weights, bias, alpha = params
-        lr_t = jnp.asarray(lr_t, dtype=backend.dtype)
+    def batch_loss_and_grad(weights, w_ro, bias, alpha_raw, Xb, yb, wb):
+        # Expect already-correct dtypes from the Python training loop.
+        # Avoid dtype-casting inside qjit; it tends to introduce extra IR and has
+        # triggered brittle MLIR lowering bugs in this repo's Catalyst versions.
 
-        @catalyst.for_loop(0, num_batches, 1)
-        def _batch_loop(i, carry):
-            cur_weights, cur_bias, cur_alpha, cur_opt_state = carry
-            Xb = X_steps[i]
-            yb = y01_steps[i]
-            wb = w_steps[i]
-            grad_w, grad_b, grad_a = _batch_grad(cur_weights, cur_bias, cur_alpha, Xb, yb, wb)
-            grads = (grad_w, grad_b, grad_a)
-            params_now = (cur_weights, cur_bias, cur_alpha)
-            updates, new_opt_state = adam_tx.update(grads, cur_opt_state, params_now)
-            updates = jax.tree_util.tree_map(lambda u: -lr_t * u, updates)
-            new_weights, new_bias, new_alpha = optax.apply_updates(params_now, updates)
-            return (new_weights, new_bias, new_alpha, new_opt_state)
+        def _loss_fn(wq, wlin, b, a_raw):
+            logits_raw = _batch_logits(wq, wlin, b, Xb)  # (proj_expval) + bias
+            if alpha_mode == "direct":
+                a = a_raw
+            else:
+                # Constrain alpha > 0 to avoid sign flips and gain blow-ups.
+                a = jax.nn.softplus(a_raw) + jnp.asarray(1e-3, dtype=backend.dtype)
+            logits = a * logits_raw  # match eval: alpha * (expval + bias)
+            y = yb  # {0,1} float
+            ce = jax.nn.softplus(logits) - y * logits  # stable BCE-with-logits
 
-        weights, bias, alpha, opt_state = _batch_loop(
-            (
-                weights,
-                bias,
-                alpha,
-                opt_state,
-            )
-        )
-        final_i = num_batches - 1
-        final_loss = _batch_loss_map(
-            weights, bias, alpha,
-            X_steps[final_i], y01_steps[final_i], w_steps[final_i],
-        )
-        loss_stats = jnp.asarray([final_loss, final_loss], dtype=backend.dtype)
-        return ((weights, bias, alpha), opt_state), key, loss_stats
+            # Optional focal factor to emphasize hard examples under class imbalance.
+            # Keep gamma as a constant for compilation stability (passed via get_compiled_core()).
+            if focal_gamma > 0.0:
+                p = jax.nn.sigmoid(logits)
+                pt = y * p + (1.0 - y) * (1.0 - p)
+                focal = jnp.power(1.0 - pt, jnp.asarray(focal_gamma, dtype=backend.dtype))
+                loss = focal * ce
+            else:
+                loss = ce
 
-    def assert_no_python_callback_ir(
-        train_state,
-        key,
-        X_steps,
-        y01_steps,
-        w_steps,
-        lr_t,
-    ) -> None:
-        """Fail fast if compiled IR still contains Python callback boundaries."""
-        _ = train_epoch_compiled(train_state, key, X_steps, y01_steps, w_steps, lr_t)
-        mlir_txt = str(getattr(train_epoch_compiled, "mlir", ""))
-        if "xla_ffi_python" in mlir_txt or "CpuCallback" in mlir_txt:
-            raise RuntimeError("Compiled train epoch still contains Python callback boundary.")
+            return jnp.mean(wb * loss)
+
+        # IMPORTANT: In this environment/version, `catalyst.value_and_grad` over a
+        # batched quantum loss has been observed to hard-crash the compiler
+        # (`memref.subview ... staticOffsets length mismatch`). Use `catalyst.grad`
+        # and compute the loss value separately.
+        loss = _loss_fn(weights, w_ro, bias, alpha_raw)
+        gwq, gwlin, gb, ga = catalyst.grad(_loss_fn, argnums=(0, 1, 2, 3))(weights, w_ro, bias, alpha_raw)
+        return loss, gwq, gwlin, gb, ga
 
     return {
         "batched_forward": batched_forward,
-        "init_opt_state": init_opt_state,
-        "train_epoch_compiled": train_epoch_compiled,
-        "assert_no_python_callback_ir": assert_no_python_callback_ir,
+        "batch_loss_and_grad": batch_loss_and_grad,
+        # For callers to size `w_ro`.
+        "readout_dim": int(
+            len(meas_ws) if measurement_name == "z_vec" else (3 * len(meas_ws) if measurement_name == "mean_z_readout" else 1)
+        ),
     }

@@ -1,10 +1,12 @@
-# %%
-"""
-#Detecção de Outliers
+#!/usr/bin/env python
+# coding: utf-8
 
-"""
+# #Detecção de Outliers
+# 
 
-# %%
+# In[ ]:
+
+
 # Detecção de Outliers - Edge-IIoTset Dataset (Versão Melhorada)
 # Foco em Isolation Forest Aprimorado e Método Híbrido
 
@@ -29,29 +31,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import warnings
-import os
+from _artifacts_runtime import setup_artifacts
+from _dataset_runtime import setup_cic_sources
+
+_ARTIFACTS_CONTEXT = setup_artifacts(__file__)
+_CIC_CONTEXT = setup_cic_sources(__file__)
+
 warnings.filterwarnings('ignore')
-
-# Salva automaticamente todas as figuras em classical/figures quando plt.show() for chamado.
-FIGURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
-os.makedirs(FIGURES_DIR, exist_ok=True)
-_FIGURE_SAVE_COUNT = 0
-
-
-def _save_figures_instead_of_show(*args, **kwargs):
-    global _FIGURE_SAVE_COUNT
-    fig_nums = plt.get_fignums()
-    for fig_num in fig_nums:
-        fig = plt.figure(fig_num)
-        _FIGURE_SAVE_COUNT += 1
-        out_name = f"deteccao_outliers_{_FIGURE_SAVE_COUNT:04d}.png"
-        out_path = os.path.join(FIGURES_DIR, out_name)
-        fig.savefig(out_path, dpi=200, bbox_inches="tight")
-        print(f"[FIGURE] Saved: {out_path}")
-    plt.close("all")
-
-
-plt.show = _save_figures_instead_of_show
 
 # Importar display se não estiver no ambiente Jupyter/Colab padrão
 try:
@@ -83,12 +69,12 @@ try:
     df = pd.read_csv(file_name)
     print(f"Dataset '{file_name}' carregado via Colab.")
 except ImportError:
-    print("Google Colab 'files' não disponível. Tentando carregar localmente 'ML-EdgeIIoT-dataset.csv'")
+    print("Google Colab 'files' não disponível. Tentando carregar localmente '../data/processed/trio_multiclass_final_single.csv'")
     try:
-        df = pd.read_csv('ML-EdgeIIoT-dataset.csv')
-        print("Dataset 'ML-EdgeIIoT-dataset.csv' carregado localmente.")
+        df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
+        print("Dataset '../data/processed/trio_multiclass_final_single.csv' carregado localmente.")
     except FileNotFoundError:
-        print("❌ Arquivo 'ML-EdgeIIoT-dataset.csv' não encontrado localmente. Por favor, verifique o caminho ou faça upload.")
+        print("❌ Arquivo '../data/processed/trio_multiclass_final_single.csv' não encontrado localmente. Por favor, verifique o caminho ou faça upload.")
         # df já está como DataFrame vazio
     except Exception as e_local:
         print(f"❌ Ocorreu um erro ao carregar o arquivo localmente: {e_local}")
@@ -1442,4 +1428,5 @@ print("="*50)
 
 
 
-# %%
+# In[ ]:
+

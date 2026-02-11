@@ -31,6 +31,6 @@ spec*.json
 **/dataset_preprocessado_sem_outliers_identificados.csv
 **/dataset_preprocessado_tratado_winsorizado.csv
 **/dataset_somente_preprocessado.csv
-/classical/artifacts/
-/classical/figures/
-/classical/images/
+classical/artifacts/
+classical/figures/
+classical/images/

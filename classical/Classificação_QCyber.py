@@ -1,9 +1,11 @@
-# %%
-"""
-# Base Edge-IIoTset Cyber Security Dataset of IoT & IIoT
-"""
+#!/usr/bin/env python
+# coding: utf-8
 
-# %%
+# # Base Edge-IIoTset Cyber Security Dataset of IoT & IIoT
+
+# In[8]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -34,75 +36,74 @@ import seaborn as sns
 import warnings
 import time
 import os
+from _artifacts_runtime import setup_artifacts
+from _dataset_runtime import setup_cic_sources
+
+_ARTIFACTS_CONTEXT = setup_artifacts(__file__)
+_CIC_CONTEXT = setup_cic_sources(__file__)
 
 warnings.filterwarnings('ignore')
 
-# Salva automaticamente todas as figuras em classical/figures quando plt.show() for chamado.
-FIGURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
-os.makedirs(FIGURES_DIR, exist_ok=True)
-_FIGURE_SAVE_COUNT = 0
-
-
-def _save_figures_instead_of_show(*args, **kwargs):
-    global _FIGURE_SAVE_COUNT
-    fig_nums = plt.get_fignums()
-    for fig_num in fig_nums:
-        fig = plt.figure(fig_num)
-        _FIGURE_SAVE_COUNT += 1
-        out_name = f"classificacao_qcyber_{_FIGURE_SAVE_COUNT:04d}.png"
-        out_path = os.path.join(FIGURES_DIR, out_name)
-        fig.savefig(out_path, dpi=200, bbox_inches="tight")
-        print(f"[FIGURE] Saved: {out_path}")
-    plt.close("all")
-
-
-plt.show = _save_figures_instead_of_show
-
-# Trio-only dataset policy: usa diretamente o CSV final do trio (source -> trio merged).
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-TRIO_DATASET_PATH = os.path.abspath(
-    os.environ.get(
-        "EDGE_TRIO_DATASET",
-        os.path.join(_PROJECT_ROOT, "data", "processed", "edge_iot_trio_binary.csv"),
-    )
-)
-_LEGACY_DATASET_FILENAMES = {
-    "ML-EdgeIIoT-dataset.csv",
-    "edge_pls8_debug.csv",
-    "ML-EdgeIIoT-dataset-pp.csv",
-    "CICIDS2017_Combinado.csv",
-    "PCA_CICIDS2017.csv",
-    "UNSW_NB15_Combinado.csv",
-    "UNSW_NB15_Combinado_preprocessing.csv",
-    "CIC-DDoS2019_Combinado.csv",
-    "PCA_CIC-DDoS2019.csv",
-    "unified_cicids_unsw_common.csv",
-    "edge_pls8_full.csv",
-}
-
-
-def _validate_trio_dataset():
-    if not os.path.exists(TRIO_DATASET_PATH):
-        raise FileNotFoundError(
-            f"Dataset do trio não encontrado: {TRIO_DATASET_PATH}. "
-            "Gere com scripts/prepare_trio_merged_dataset.py ou defina EDGE_TRIO_DATASET."
-        )
-_validate_trio_dataset()
-_ORIGINAL_READ_CSV = pd.read_csv
-
-
-def _read_csv_with_trio_redirection(filepath_or_buffer, *args, **kwargs):
-    if isinstance(filepath_or_buffer, str):
-        basename = os.path.basename(filepath_or_buffer)
-        if basename in _LEGACY_DATASET_FILENAMES:
-            print(f"[TRIO] Redirecting '{basename}' -> '{TRIO_DATASET_PATH}'")
-            filepath_or_buffer = TRIO_DATASET_PATH
-    return _ORIGINAL_READ_CSV(filepath_or_buffer, *args, **kwargs)
-
-
-pd.read_csv = _read_csv_with_trio_redirection
-
 # --- 1. FUNÇÕES AUXILIARES PARA ANÁLISE ---
+
+_TARGET_ALIASES = [
+    "Attack_label",
+    "Attack_type",
+    "Label",
+    "label",
+    "attack_cat",
+    "attack_category",
+    "is_attack",
+]
+
+
+def _prepare_features_and_target(df, mode):
+    """Schema-safe target resolver across merged and raw CIC variants."""
+    target_candidates = [col for col in _TARGET_ALIASES if col in df.columns]
+    if not target_candidates:
+        raise ValueError(
+            f"Nenhuma coluna alvo encontrada. Colunas esperadas: {_TARGET_ALIASES}"
+        )
+
+    cardinality = {col: int(df[col].nunique(dropna=True)) for col in target_candidates}
+
+    if mode == "binary":
+        if "Attack_type" in cardinality and 0 < cardinality["Attack_type"] <= 2:
+            target_col = "Attack_type"
+        else:
+            preferred = [
+                "Attack_label",
+                "is_attack",
+                "label",
+                "Label",
+                "attack_category",
+                "attack_cat",
+            ]
+            valid = [col for col in preferred if col in cardinality and 0 < cardinality[col] <= 2]
+            target_col = valid[0] if valid else min(target_candidates, key=lambda col: abs(cardinality[col] - 2))
+    elif mode == "multiclass":
+        if "Attack_label" in cardinality and str(df["Attack_label"].dtype) in {"object", "string"}:
+            target_col = "Attack_label"
+        else:
+            preferred = [
+                "Attack_label",
+                "attack_cat",
+                "attack_category",
+                "Attack_type",
+                "Label",
+                "label",
+                "is_attack",
+            ]
+            valid = [col for col in preferred if col in cardinality and cardinality[col] > 2]
+            target_col = valid[0] if valid else max(target_candidates, key=lambda col: cardinality[col])
+    else:
+        raise ValueError(f"Modo inválido para _prepare_features_and_target: {mode}")
+
+    drop_cols = [col for col in (_TARGET_ALIASES + ["split"]) if col in df.columns and col != target_col]
+    X = df.drop(columns=drop_cols, errors="ignore")
+    y_raw = df[target_col]
+    return X, y_raw, target_col, cardinality
+
 
 def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, model_name, n_top_features=3):
     """
@@ -189,9 +190,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('ML-EdgeIIoT-dataset.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'ML-EdgeIIoT-dataset.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -205,9 +206,9 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-# MODIFICAÇÃO: Removendo tanto o alvo (Attack_type) quanto a coluna 'attack_label' das features
-X = df.drop(columns=['Attack_type', 'Attack_label'])
-y_raw = df['Attack_type']
+# MODIFICAÇÃO: seleção robusta do alvo binário para múltiplos esquemas.
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="binary")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 # Checa e remove a coluna 'frame.time' se ela existir
 if 'frame.time' in X.columns:
@@ -399,12 +400,11 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
 
-# %%
-"""
-# Base Pre processada Edge-IIoTset Cyber Security Dataset of IoT & IIoT
-"""
+# # Base Pre processada Edge-IIoTset Cyber Security Dataset of IoT & IIoT
 
-# %%
+# In[2]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -525,9 +525,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('edge_pls8_debug.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'ML-EdgeIIoT-dataset.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -541,9 +541,9 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-# MODIFICAÇÃO: Removendo tanto o alvo (Attack_type) quanto a coluna 'attack_label' das features
-X = df.drop(columns=['Attack_label', 'split'])
-y_raw = df['Attack_label']
+# MODIFICAÇÃO: seleção robusta do alvo multiclasse para múltiplos esquemas.
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="multiclass")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 # Checa e remove a coluna 'frame.time' se ela existir
 if 'frame.time' in X.columns:
@@ -735,15 +735,14 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
 
-# %%
-"""
-# Base de dados IoTSec - OPF
-"""
+# # Base de dados IoTSec - OPF
 
-# %%
-# pip install opfython
+# In[2]:
 
-# %%
+
+# In[ ]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -781,50 +780,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 
-# OPF
-try:
-    from opfython.models import SupervisedOPF
-    from opfython.stream import loader
-except ImportError:
-    SupervisedOPF = None
-    loader = None
-
-from sklearn.base import BaseEstimator, ClassifierMixin
-
 warnings.filterwarnings('ignore')
 
 # --- 1. FUNÇÕES AUXILIARES PARA ANÁLISE ---
-
-
-class OPFClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, distance='euclidean'):
-        self.distance = distance
-        self.model = None
-
-    def fit(self, X, y):
-        if SupervisedOPF is None:
-            raise ImportError(
-                "opfython não está disponível neste ambiente. "
-                "Instale opfython em uma versão de Python compatível (<3.10)."
-            )
-        # Garante que X e y são arrays numpy
-        X = np.array(X, dtype=float)
-        y = np.array(y, dtype=int)
-
-        self.model = SupervisedOPF(distance=self.distance)
-        self.model.fit(X, y)
-        return self
-
-    def predict(self, X):
-        X = np.array(X, dtype=float)
-        return self.model.predict(X)
-
-    def get_params(self, deep=True):
-        return {'distance': self.distance}
-
-    def set_params(self, **params):
-        self.distance = params.get('distance', self.distance)
-        return self
 
 def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, model_name, n_top_features=3):
     """
@@ -911,9 +869,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('ML-EdgeIIoT-dataset-pp.csv')
+    df = pd.read_csv('../data/processed/mergido_preprocessado.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'ML-EdgeIIoT-dataset.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/mergido_preprocessado.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -927,9 +885,9 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-# MODIFICAÇÃO: Removendo tanto o alvo (Attack_type) quanto a coluna 'attack_label' das features
-X = df.drop(columns=['Attack_label'])
-y_raw = df['Attack_label']
+# MODIFICAÇÃO: seleção robusta do alvo multiclasse para múltiplos esquemas.
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="multiclass")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 # Checa e remove a coluna 'frame.time' se ela existir
 if 'frame.time' in X.columns:
@@ -983,8 +941,8 @@ classifiers = {
         'model': LogisticRegression(random_state=42, max_iter=1000),
         'params': {
             'C': [0.01, 0.1, 1, 10, 100],
-            'solver': ['liblinear', 'saga', 'lbfgs'],
-            'penalty': ['l1', 'l2', 'elasticnet', 'none']
+            'solver': ['liblinear', 'saga'],
+            'penalty': ['l1', 'l2']
         },
         'use_scaled_data': True
     },
@@ -1005,25 +963,7 @@ classifiers = {
             'var_smoothing': [1e-9, 1e-8, 1e-7, 1e-6, 1e-5]
         },
         'use_scaled_data': True
-    },
-
-    'OPF': {
-          # Define com valor inicial válido
-          'model': OPFClassifier(distance='euclidean'),
-          'params': {
-              'distance': ['additive_symmetric', 'average_euclidean', 'bhattacharyya', 'bray_curtis',
-            'canberra', 'chebyshev', 'chi_squared', 'chord', 'clark', 'cosine',
-            'dice', 'divergence', 'euclidean', 'gower', 'hamming', 'hassanat',
-            'hellinger', 'jaccard', 'jeffreys', 'jensen', 'jensen_shannon',
-            'k_divergence', 'kulczynski', 'kullback_leibler', 'lorentzian',
-            'manhattan', 'matusita', 'mean_censored_euclidean', 'min_symmetric',
-            'non_intersection', 'pearson', 'sangvi', 'soergel', 'squared_chord',
-            'squared_euclidean', 'statistic', 'topsoe', 'vicis_symmetric1',
-            'vicis_symmetric2', 'vicis_symmetric3', 'vicis_wave_hedges'
-              ]
-          },
-          'use_scaled_data': True
-      }
+    }
 }
 
 # --- Execução da Análise na Amostra para encontrar os melhores parâmetros ---
@@ -1183,23 +1123,23 @@ print(cm_best)
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
-"""
-# Base CIC-IDS-2017
 
-"""
+# # Base CIC-IDS-2017
+# 
 
-# %%
+# In[1]:
+
+
 import pandas as pd
 import glob
 
 # --- Configuração ---
 # O caminho para a pasta que contém os seus arquivos CSV.
 # O padrão '/**/' faz uma busca recursiva em todas as subpastas.
-pasta_dos_dados = 'Dataset'
+pasta_dos_dados = '../data/CIC-BCCC-NRC-Edge-IIoTSet-2022'
 
 # O nome do arquivo final que será gerado.
-arquivo_de_saida = 'CICIDS2017_Combinado.csv'
+arquivo_de_saida = '../data/processed/trio_multiclass_final_single.csv'
 # --------------------
 
 print(f"Buscando arquivos .csv na pasta '{pasta_dos_dados}'...")
@@ -1260,7 +1200,9 @@ else:
 
 
 
-# %%
+# In[5]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -1386,9 +1328,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('CICIDS2017_Combinado.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'CICIDS2017_Combinado.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -1402,8 +1344,8 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-X = df.drop(columns=['Label'])
-y_raw = df['Label']
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="multiclass")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 if 'frame.time' in X.columns:
     X = X.drop('frame.time', axis=1)
@@ -1590,12 +1532,12 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
-"""
-# CICIDS 2017 Binário
-"""
 
-# %%
+# # CICIDS 2017 Binário
+
+# In[8]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -1721,9 +1663,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('PCA_CICIDS2017.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'UNSW_NB15_Combinado.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -1737,8 +1679,8 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-X = df.drop(columns=['Label'])
-y_raw = df['Label']
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="binary")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 if 'frame.time' in X.columns:
     X = X.drop('frame.time', axis=1)
@@ -1925,25 +1867,28 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
+
+# In[7]:
 
 
-# %%
-"""
-# Dataset UNSW_NB15
-"""
 
-# %%
+
+
+# # Dataset UNSW_NB15
+
+# In[1]:
+
+
 import pandas as pd
 import glob
 
 # --- Configuração ---
 # O caminho para a pasta que contém os seus arquivos CSV.
 # O padrão '/**/' faz uma busca recursiva em todas as subpastas.
-pasta_dos_dados = 'UNSW_NB15'
+pasta_dos_dados = '../data/CIC-BCCC-NRC-IoT-2023-Original Training and Testing'
 
 # O nome do arquivo final que será gerado.
-arquivo_de_saida = 'UNSW_NB15_Combinado.csv'
+arquivo_de_saida = '../data/processed/trio_multiclass_final_single.csv'
 # --------------------
 
 print(f"Buscando arquivos .csv na pasta '{pasta_dos_dados}'...")
@@ -2004,11 +1949,16 @@ else:
 
 
 
-# %%
-df = pd.read_csv('UNSW_NB15_Combinado.csv')
+# In[6]:
+
+
+df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 df.head(-100)
 
-# %%
+
+# In[ ]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -2134,9 +2084,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('UNSW_NB15_Combinado.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'UNSW_NB15_Combinado.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -2150,8 +2100,8 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-X = df.drop(columns=['label','attack_cat'])
-y_raw = df['attack_cat']
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="multiclass")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 if 'frame.time' in X.columns:
     X = X.drop('frame.time', axis=1)
@@ -2338,22 +2288,22 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
-"""
-# Dataset UNSW_NB15
-"""
 
-# %%
+# # Dataset UNSW_NB15
+
+# In[2]:
+
+
 import pandas as pd
 import glob
 
 # --- Configuração ---
 # O caminho para a pasta que contém os seus arquivos CSV.
 # O padrão '/**/' faz uma busca recursiva em todas as subpastas.
-pasta_dos_dados = 'UNSW_NB15-PP'
+pasta_dos_dados = '../data/CIC-BCCC-NRC-UQ-IOT-2022'
 
 # O nome do arquivo final que será gerado.
-arquivo_de_saida = 'UNSW_NB15_Combinado_preprocessing.csv'
+arquivo_de_saida = '../data/processed/mergido_preprocessado.csv'
 # --------------------
 
 print(f"Buscando arquivos .csv na pasta '{pasta_dos_dados}'...")
@@ -2414,7 +2364,9 @@ else:
 
 
 
-# %%
+# In[3]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -2540,9 +2492,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('UNSW_NB15_Combinado_preprocessing.csv')
+    df = pd.read_csv('../data/processed/mergido_preprocessado.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'UNSW_NB15_Combinado.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/mergido_preprocessado.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -2556,8 +2508,8 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-X = df.drop(columns=['label'])
-y_raw = df['label']
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="binary")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 if 'frame.time' in X.columns:
     X = X.drop('frame.time', axis=1)
@@ -2744,15 +2696,18 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
-"""
-#  Dataset CIC-DDoS2019
-"""
 
-# %%
+# #  Dataset CIC-DDoS2019
+
+# In[2]:
+
+
 import pandas as pd
 
-# %%
+
+# In[1]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -2878,9 +2833,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('CIC-DDoS2019_Combinado.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'UNSW_NB15_Combinado.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -2894,8 +2849,8 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-X = df.drop(columns=['Label'])
-y_raw = df['Label']
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="multiclass")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 if 'frame.time' in X.columns:
     X = X.drop('frame.time', axis=1)
@@ -3082,12 +3037,12 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
-"""
-# CIC-DDoS2019 - Binária
-"""
 
-# %%
+# # CIC-DDoS2019 - Binária
+
+# In[ ]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -3213,9 +3168,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('PCA_CIC-DDoS2019.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'UNSW_NB15_Combinado.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -3229,8 +3184,8 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-X = df.drop(columns=['Label'])
-y_raw = df['Label']
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="binary")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 if 'frame.time' in X.columns:
     X = X.drop('frame.time', axis=1)
@@ -3417,12 +3372,12 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
-"""
-# Base de dados - Combinada
-"""
 
-# %%
+# # Base de dados - Combinada
+
+# In[5]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -3548,9 +3503,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('unified_cicids_unsw_common.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'UNSW_NB15_Combinado.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -3564,8 +3519,8 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-X = df.drop(columns=['attack_category','is_attack'])
-y_raw = df['is_attack']
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="binary")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 if 'frame.time' in X.columns:
     X = X.drop('frame.time', axis=1)
@@ -3752,15 +3707,18 @@ analisar_e_exportar_todos_erros(y, y_pred_best, X_full_df_orig, cm_best, target_
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
+
+# In[3]:
+
+
 df.head(100)
 
-# %%
-"""
-# Base Balbino - Ultima
-"""
 
-# %%
+# # Base Balbino - Ultima
+
+# In[1]:
+
+
 # -*- coding: utf-8 -*-
 """
 Este script realiza uma análise completa de modelos de classificação, com foco
@@ -3798,50 +3756,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 
-# OPF
-try:
-    from opfython.models import SupervisedOPF
-    from opfython.stream import loader
-except ImportError:
-    SupervisedOPF = None
-    loader = None
-
-from sklearn.base import BaseEstimator, ClassifierMixin
-
 warnings.filterwarnings('ignore')
 
 # --- 1. FUNÇÕES AUXILIARES PARA ANÁLISE ---
-
-
-class OPFClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, distance='euclidean'):
-        self.distance = distance
-        self.model = None
-
-    def fit(self, X, y):
-        if SupervisedOPF is None:
-            raise ImportError(
-                "opfython não está disponível neste ambiente. "
-                "Instale opfython em uma versão de Python compatível (<3.10)."
-            )
-        # Garante que X e y são arrays numpy
-        X = np.array(X, dtype=float)
-        y = np.array(y, dtype=int)
-
-        self.model = SupervisedOPF(distance=self.distance)
-        self.model.fit(X, y)
-        return self
-
-    def predict(self, X):
-        X = np.array(X, dtype=float)
-        return self.model.predict(X)
-
-    def get_params(self, deep=True):
-        return {'distance': self.distance}
-
-    def set_params(self, **params):
-        self.distance = params.get('distance', self.distance)
-        return self
 
 def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, model_name, n_top_features=3):
     """
@@ -3928,9 +3845,9 @@ def analisar_e_exportar_todos_erros(y_true, y_pred, X_df, cm, target_names, mode
 # --- Carregamento e Preparação Inicial ---
 print("Carregando o dataset...")
 try:
-    df = pd.read_csv('edge_pls8_full.csv')
+    df = pd.read_csv('../data/processed/trio_multiclass_final_single.csv')
 except FileNotFoundError:
-    print("\nERRO: O arquivo 'edge_pls8_full.csv' não foi encontrado.")
+    print("\nERRO: O arquivo '../data/processed/trio_multiclass_final_single.csv' não foi encontrado.")
     exit()
 except Exception as e:
     print(f"Ocorreu um erro ao ler o CSV: {e}")
@@ -3944,9 +3861,9 @@ df.dropna(inplace=True)
 print(f"Shape do dataset após limpeza: {df.shape}")
 
 # --- Separação e Codificação ---
-# MODIFICAÇÃO: Removendo tanto o alvo (Attack_type) quanto a coluna 'attack_label' das features
-X = df.drop(columns=['Attack_label'])
-y_raw = df['Attack_label']
+# MODIFICAÇÃO: seleção robusta do alvo multiclasse para múltiplos esquemas.
+X, y_raw, target_col, target_cardinality = _prepare_features_and_target(df, mode="multiclass")
+print(f"Target selecionado: {target_col} ({target_cardinality[target_col]} classes)")
 
 # Checa e remove a coluna 'frame.time' se ela existir
 if 'frame.time' in X.columns:
@@ -4000,8 +3917,8 @@ classifiers = {
         'model': LogisticRegression(random_state=42, max_iter=1000),
         'params': {
             'C': [0.01, 0.1, 1, 10, 100],
-            'solver': ['liblinear', 'saga', 'lbfgs'],
-            'penalty': ['l1', 'l2', 'elasticnet', 'none']
+            'solver': ['liblinear', 'saga'],
+            'penalty': ['l1', 'l2']
         },
         'use_scaled_data': True
     },
@@ -4022,25 +3939,7 @@ classifiers = {
             'var_smoothing': [1e-9, 1e-8, 1e-7, 1e-6, 1e-5]
         },
         'use_scaled_data': True
-    },
-
-    #'OPF': {
-     #     # Define com valor inicial válido
-     #     'model': OPFClassifier(distance='euclidean'),
-     #     'params': {
-     #         'distance': ['additive_symmetric', 'average_euclidean', 'bhattacharyya', 'bray_curtis',
-     #       'canberra', 'chebyshev', 'chi_squared', 'chord', 'clark', 'cosine',
-     #       'dice', 'divergence', 'euclidean', 'gower', 'hamming', 'hassanat',
-     #       'hellinger', 'jaccard', 'jeffreys', 'jensen', 'jensen_shannon',
-     #       'k_divergence', 'kulczynski', 'kullback_leibler', 'lorentzian',
-     #       'manhattan', 'matusita', 'mean_censored_euclidean', 'min_symmetric',
-     #       'non_intersection', 'pearson', 'sangvi', 'soergel', 'squared_chord',
-     #       'squared_euclidean', 'statistic', 'topsoe', 'vicis_symmetric1',
-     #       'vicis_symmetric2', 'vicis_symmetric3', 'vicis_wave_hedges'
-     #         ]
-     #     },
-     #     'use_scaled_data': True
-     # }
+    }
 }
 
 # --- Execução da Análise na Amostra para encontrar os melhores parâmetros ---
@@ -4200,4 +4099,5 @@ print(cm_best)
 
 print("\n" + "="*80 + "\nANÁLISE CONCLUÍDA!\n" + "="*80)
 
-# %%
+
+# In[ ]:

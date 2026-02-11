@@ -65,41 +65,30 @@
 - Added GPU dtype/runtime hints when device is `lightning.gpu`:
   - `c_dtype=np.complex64`
   - optional `use_async` via `EDGE_LIGHTNING_ASYNC`.
-- Kept QNode compiled with `qjit(..., autograph=False)`.
-- Added configurable batch method for experimentation:
-  - `EDGE_COMPILED_BATCH_MODE=vmap|map` (`jax.vmap` vs `jax.lax.map`).
-- Loss updated to stable BCE-with-logits:
-  - `softplus(logit) - y*logit`.
-- Params are `(weights, bias, alpha)` and optimizer is `optax.adam`.
-- Added epoch-level JAX scan helper (`train_epoch_compiled`) with on-device permutation and donated state.
-- Training kernel now uses batch-level AD via `catalyst.grad(_batch_loss_map, ...)` per step (no per-sample gradient accumulation loop).
-- Avoids the `value_and_grad` crash path while reducing gradient-call overhead.
-- NOTE: this is still a JAX-compiled classical loop calling qjit QNode, not full Catalyst-native optimization loop yet.
+- Refactored to a minimal compiled contract:
+  - `batched_forward(weights, X) -> expvals`
+  - `batch_loss_and_grad(weights, bias, alpha, Xb, yb, wb) -> (loss, gw, gb, ga)`
+- Uses stable BCE-with-logits:
+  - `softplus(logit) - y*logit`
+- Avoids `catalyst.value_and_grad` on batched quantum losses (see finding #6):
+  - computes `loss = loss_fn(...)`
+  - computes grads with `catalyst.grad(loss_fn, ...)`
+- Avoids `jax.vmap` over qjit QNodes (no batching rule for `qinst`):
+  - uses `jax.lax.scan` to iterate over batch rows safely (serial evaluation).
+- No optimizer or epoch loop in compiled code.
 
 ### `scripts/core/builders.py`
-- Deterministic preprocessing/labels/sampling improvements:
-  - deterministic binary label coercion, deterministic CSV row sampling seed handling.
-- Batch size now respects config.
-- Real validation split for threshold selection (`val_size`).
-- Threshold persisted and used consistently on load/eval.
-- Preprocessing/coercion states persisted and re-applied at inference.
-- Logging path simplified:
-  - removed expensive per-5-iter duplicate batch forward.
-  - moved to epoch-level reporting.
-  - added `losses.block_until_ready()` for honest timing when async dispatch exists.
-- Device creation now passes `c_dtype=np.complex64` for `lightning.gpu`.
+- Training loop is pure Python per-batch:
+  - Optax optimizer runs outside compiled code.
+  - Validation-only evaluation during training; test is computed once at the end.
+  - Score polarity (`score_sign`) is fixed once per run via train separation and never flipped.
+- Preprocessing cache is versioned with a dataset fingerprint (size + mtime) to avoid stale reuse.
+- Checkpoints do not store raw sklearn objects; only `*_state` is persisted.
+- W&B logging is epoch-indexed and includes score separation diagnostics (`val/sep`).
 
-### Eval/CLI/supporting files
-- `scripts/eval_models_edge_pls8.py`:
-  - deterministic label coercion.
-  - random seeded subset for `--limit` (no `head` bias).
-  - thresholded prediction from `decision_function`.
-- `scripts/train_edge_pls8_binary.py`:
-  - `--batch` actually passed through.
-- `scripts/specs.py`:
-  - measurement mismatch fixed to include `"z0"`.
-- `scripts/export_pls_full.py`:
-  - deterministic label coercion + leakage warning.
+### Supporting files
+- Benchmark spec helpers were folded into `scripts/QML_ML-EdgeIIoT-benchmark.py` (former `scripts/specs.py`).
+- `README.md` examples use `uv run python scripts/QML_ML-EdgeIIoT-benchmark.py` (script path), because `-m scripts.<name>` is not valid with `-` in the filename.
 
 ## Validation notes
 - Syntax checks passed with:
