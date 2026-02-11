@@ -15,9 +15,22 @@ wheels/
 /data/PCA_CIC-DDoS2019.csv
 /data/*
 wandb/
+wandb_specs/
 recipes/
 logs/
 /scripts/.sweep_cache/
 /reports/
 /models/
 /cache/
+
+# Never commit model weights / artifacts
+*.pt
+spec*.json
+
+**/dataset_original_com_flags_outliers.csv
+**/dataset_preprocessado_sem_outliers_identificados.csv
+**/dataset_preprocessado_tratado_winsorizado.csv
+**/dataset_somente_preprocessado.csv
+/classical/artifacts/
+/classical/figures/
+/classical/images/
